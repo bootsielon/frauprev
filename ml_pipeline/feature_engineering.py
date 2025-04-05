@@ -66,6 +66,10 @@ def run_feature_engineering(
     Returns:
         tuple: Transformed dataframe and path to output folder
     """
+    # Ensure param_hash is a valid string for filenames
+    if not isinstance(param_hash, str):
+        param_hash = param_hash.get("eda", str(param_hash))
+    # Construct paths using valid param_hash
     step_dir = os.path.join(output_dir, f"step1_{param_hash}")
     final_csv = os.path.join(step_dir, f"step1_feature_engineered_{param_hash}.csv")
     registry_file = os.path.join(step_dir, f"registry_{param_hash}.json")
@@ -77,6 +81,13 @@ def run_feature_engineering(
         return pd.read_csv(final_csv), step_dir
 
     os.makedirs(step_dir, exist_ok=True)
+
+    # Ensure df is a pandas DataFrame
+    if not isinstance(df, pd.DataFrame):
+        try:
+            df = df.data
+        except AttributeError:
+            df = load_data()   # Fallback to loading data
 
     # Add derived features
     df, derived = add_derived_features(df)

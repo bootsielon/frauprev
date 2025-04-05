@@ -4,6 +4,8 @@ import pandas as pd
 import sqlite3
 import pandas as pd
 import sqlite3
+import os
+from datetime import datetime, timezone
 
 
 def load_data(db_path: str = "fraud_poc.db") -> pd.DataFrame:
@@ -88,3 +90,27 @@ if __name__ == "__main__":
     hash_id = make_param_hash(config)
     print(f"Generated hash ID: {hash_id}")
     # Example configuration dictionary for hashing
+
+
+def log_registry(step: str, param_hash: str, config: dict, output_dir: str) -> None:
+    """
+    Log step details to the global registry.
+
+    Args:
+        step (str): Step name.
+        param_hash (str): Parameter hash.
+        config (dict): Configuration dictionary.
+        output_dir (str): Output directory.
+
+    Returns:
+        None
+    """
+    os.makedirs(os.path.dirname("artifacts/global_registry.jsonl"), exist_ok=True)
+    with open("artifacts/global_registry.jsonl", "a") as f:
+        f.write(json.dumps({
+            "step": step,
+            "param_hash": param_hash,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "config": config,
+            "output_dir": output_dir
+        }) + "\n")

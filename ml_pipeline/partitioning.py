@@ -10,7 +10,7 @@ from datetime import datetime, timezone  # Update import to include timezone
 from sklearn.model_selection import StratifiedShuffleSplit, train_test_split  # Add this import
 # from typing import Literal
 from utils import make_param_hash, load_data  # Assuming this function is in utils.py
-from feature_engineering import run_feature_engineering
+from ml_pipeline.feature_engineering import run_feature_engineering
 import mlflow  # Add import for MLflow
 
 
