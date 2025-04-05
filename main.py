@@ -2,7 +2,7 @@ from ml_pipeline import MLPipeline
 
 if __name__ == "__main__":
     config = {
-        "target_col": "is_fraud",
+        "target_column": "is_fraud",
         "id_col": "transaction_id",
         "seed": 42,
         "train_size": 0.6,

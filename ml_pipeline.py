@@ -28,7 +28,7 @@ class MLPipeline:
     def validate_config(self):
         """Validate the configuration dictionary."""
         required_keys = [
-            "target_col", "id_col", "seed", "train_size", "val_size", "test_size",
+            "target_column", "id_col", "seed", "train_size", "val_size", "test_size",
             "stratify_cardinality_threshold", "c1", "c2", "b1", "c3", "id_like_exempt"
         ]
         for key in required_keys:
@@ -74,12 +74,12 @@ class MLPipeline:
         df_raw = self.load_data()
         self.dataframes["raw"] = df_raw
         config = {
-            "target_col": self.config["target_col"],
+            "target_column": self.config["target_column"],
             "columns": sorted(df_raw.columns),
             "dtypes": {col: str(df_raw[col].dtype) for col in df_raw.columns}
         }
         hash_id = make_eda_hash(config)
-        path = run_eda(df_raw, target_col=config["target_col"], param_hash=hash_id, config=config, use_mlflow=True)
+        path = run_eda(df_raw, param_hash=hash_id, config=config, use_mlflow=True)
         self.hashes["eda"] = hash_id
         self.paths["eda"] = path
         self.log_registry("eda", hash_id, config, path)
@@ -104,7 +104,7 @@ class MLPipeline:
         """Run Step 2: Partitioning."""
         df = self.dataframes["feature_engineered"]
         config = {
-            "target_col": self.config["target_col"],
+            "target_column": self.config["target_column"],
             "id_col": self.config["id_col"],
             "seed": self.config["seed"],
             "train_size": self.config["train_size"],
@@ -116,7 +116,7 @@ class MLPipeline:
         splits, path = run_partitioning(
             df=df,
             id_col=config["id_col"],
-            target_col=config["target_col"],
+            target_col=config["target_column"],
             param_hash=hash_id,
             #config=config,
             use_mlflow=True
@@ -131,7 +131,7 @@ class MLPipeline:
         """Run Step 3: Numeric Conversion + One-Hot Encoding."""
         df = self.dataframes["feature_engineered"]
         config = {
-            "target_col": self.config["target_col"],
+            "target_column": self.config["target_column"],
             "c1": self.config["c1"],
             "c2": self.config["c2"],
             "b1": self.config["b1"],
@@ -141,7 +141,7 @@ class MLPipeline:
         step3_hash = make_param_hash(config)  # Fix: Use make_param_hash from utils
         df_numeric, path = run_numeric_conversion(
             df=df,
-            target_col=config["target_col"],
+            target_col=config["target_column"],
             param_hash=step3_hash,
             config=config,
             use_mlflow=True
