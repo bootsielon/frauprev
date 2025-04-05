@@ -25,11 +25,13 @@ def cleanup_artifacts(artifact_dirs, db_path):
 if __name__ == "__main__":
     # List of artifact directories to clean
     artifact_dirs = [
+        "mlruns",
         "artifacts",
         "artifacts/eda",
         "artifacts/step1",
         "artifacts/step2",
         "artifacts/step3",
+        
     ]
     # Path to the generated database
     db_path = "fraud_poc.db"
