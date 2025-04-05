@@ -6,6 +6,7 @@ from partitioning import run_partitioning
 from gen_data import main as generate_data
 from utils import load_data, log_to_global_registry, make_param_hash
 from datetime import datetime, timezone
+from numeric_conversion import run_numeric_conversion
 
 
 def run_pipeline(config: dict, global_hash: str) -> None:
@@ -107,6 +108,35 @@ def run_pipeline(config: dict, global_hash: str) -> None:
     })
     print(f"[main] Partitioning artifacts saved at: {step2_path}")
     print("Data partitioning completed. Partitioned data saved to:", step2_path)
+
+    # === STEP 3: Numeric Conversion + One-Hot Encoding ===
+    step3_config = {
+        "target_col": config["target_col"],
+        "c1": 10,
+        "c2": 0.01,
+        "b1": True,
+        "c3": 10,
+        "id_like_exempt": True
+    }
+    step3_hash = make_param_hash(step3_config)
+
+    df_numeric, step3_path = run_numeric_conversion(
+        df=df_fe,
+        target_col=step3_config["target_col"],
+        param_hash=step3_hash,
+        config=step3_config,
+        use_mlflow=True
+    )
+
+    log_to_global_registry({
+        "step": "numeric_conversion",
+        "hash": step3_hash,
+        "timestamp": datetime.utcnow().isoformat(),
+        "config": step3_config,
+        "output_dir": step3_path
+    })
+
+    print(f"[main] Numeric conversion saved at: {step3_path}")
 
 
 if __name__ == "__main__":
