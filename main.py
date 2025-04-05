@@ -1,131 +1,116 @@
 import os
 import pandas as pd
-import logging  # Added for logging
+import logging
 from eda import run_eda
 from feature_engineering import run_feature_engineering
 from partitioning import run_partitioning
+from numeric_conversion import run_numeric_conversion
 from gen_data import main as generate_data
 from utils import load_data, log_to_global_registry, make_param_hash
 from datetime import datetime, timezone
-from numeric_conversion import run_numeric_conversion
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def validate_config(config: dict) -> None:
-    """Validate the configuration dictionary."""
-    required_keys = [
-        "target_col", "id_col", "seed", "train_size", "val_size", "test_size",
-        "stratify_cardinality_threshold", "c1", "c2", "b1", "c3", "id_like_exempt"
-    ]
-    for key in required_keys:
-        if key not in config:
-            raise ValueError(f"Missing required config key: {key}")
-    if not (0 < config["train_size"] < 1 and 0 < config["val_size"] < 1 and 0 < config["test_size"] < 1):
-        raise ValueError("Train, validation, and test sizes must be between 0 and 1.")
-    if config["train_size"] + config["val_size"] + config["test_size"] != 1:
-        raise ValueError("Train, validation, and test sizes must sum to 1.")
 
-def create_directories(directories: list) -> None:
-    """Create a list of directories if they do not exist."""
-    for directory in directories:
-        os.makedirs(directory, exist_ok=True)
+class FraudPipeline:
+    def __init__(self, config: dict):
+        self.config = config
+        self.hashes = {}
+        self.paths = {}
+        self.dataframes = {}
+        self.global_hash = make_param_hash(config)
 
-def run_pipeline(config: dict, global_hash: str) -> None:
-    try:
-        validate_config(config)  # Validate config at the start
-        create_directories(["artifacts", "artifacts/eda", "artifacts/step1", "artifacts/step2"])
-        logging.info("Starting pipeline execution...")
+    def validate_config(self):
+        """Validate the configuration dictionary."""
+        required_keys = [
+            "target_col", "id_col", "seed", "train_size", "val_size", "test_size",
+            "stratify_cardinality_threshold", "c1", "c2", "b1", "c3", "id_like_exempt"
+        ]
+        for key in required_keys:
+            if key not in self.config:
+                raise ValueError(f"Missing required config key: {key}")
+        if not (0 < self.config["train_size"] < 1 and 0 < self.config["val_size"] < 1 and 0 < self.config["test_size"] < 1):
+            raise ValueError("Train, validation, and test sizes must be between 0 and 1.")
+        if self.config["train_size"] + self.config["val_size"] + self.config["test_size"] != 1:
+            raise ValueError("Train, validation, and test sizes must sum to 1.")
 
-        # Measure execution time for each step
-        import time
-        start_time = time.time()
+    def create_directories(self):
+        """Create necessary directories for artifacts."""
+        directories = ["artifacts", "artifacts/eda", "artifacts/step1", "artifacts/step2", "artifacts/step3"]
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
 
-        # Check if the database exists, if not, generate synthetic data
-        db_path = "fraud_poc.db"
-        if not os.path.exists(db_path):
-            logging.info("[main] Database not found. Generating synthetic data...")
-            generate_data()
-        else:
-            logging.info("[main] Database found. Skipping data generation.")
-
-        # Load data
-        df = load_data(db_path)
-
-        # Step 0: EDA
+    def run_step_0_eda(self):
+        """Run Step 0: EDA."""
+        df = self.dataframes.get("raw")
         eda_config = {
-            "target_col": config["target_col"],
+            "target_col": self.config["target_col"],
             "columns": sorted(df.columns),
             "dtypes": {col: str(df[col].dtype) for col in df.columns}
         }
-        eda_hash = make_param_hash({**config, **eda_config})  # Combine global config with step-specific config
-
-        # Log execution time for EDA
-        eda_start = time.time()
+        eda_hash = make_param_hash({**self.config, **eda_config})
         eda_path = run_eda(
             df=df,
             target_col=eda_config["target_col"],
             param_hash=eda_hash,
             use_mlflow=True,
-            config=eda_config,
-            # output_path=config.get("output_path", "artifacts/eda"),  # Optional output path
+            config=eda_config
         )
-        logging.info(f"EDA completed in {time.time() - eda_start:.2f} seconds.")
-
+        self.hashes["eda"] = eda_hash
+        self.paths["eda"] = eda_path
         log_to_global_registry({
             "step": "eda",
             "hash": eda_hash,
-            "global_hash": global_hash,  # Include global hash for traceability
+            "global_hash": self.global_hash,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "config": eda_config,
             "output_dir": eda_path
         })
-        logging.info(f"[main] EDA artifacts saved at: {os.path.join('artifacts', 'eda')}")
+        logging.info(f"[EDA] Artifacts saved at: {eda_path}")
 
-        # Step 1: Feature Engineering
+    def run_step_1_feature_engineering(self):
+        """Run Step 1: Feature Engineering."""
+        df = self.dataframes.get("raw")
         step1_config = {
             "columns": sorted(df.columns),
             "dtypes": {col: str(df[col].dtype) for col in df.columns}
         }
-        step1_hash = make_param_hash({**config, **step1_config})  # Combine global config with step-specific config
-
-        # Log execution time for Feature Engineering
-        fe_start = time.time()
+        step1_hash = make_param_hash({**self.config, **step1_config})
         df_fe, step1_path = run_feature_engineering(
             df=df,
             param_hash=step1_hash,
             use_mlflow=True,
-            config=step1_config,
-            # output_path=config.get("output_path", "artifacts/step1"),  # Optional output path
+            config=step1_config
         )
-        logging.info(f"Feature Engineering completed in {time.time() - fe_start:.2f} seconds.")
-
+        self.dataframes["feature_engineered"] = df_fe
+        self.hashes["feature_engineering"] = step1_hash
+        self.paths["feature_engineering"] = step1_path
         log_to_global_registry({
             "step": "feature_engineering",
             "hash": step1_hash,
-            "global_hash": global_hash,  # Include global hash for traceability
+            "global_hash": self.global_hash,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "config": step1_config,
             "output_dir": step1_path
         })
-        logging.info(f"[main] Feature Engineering artifacts saved at: {step1_path}")
+        logging.info(f"[Feature Engineering] Artifacts saved at: {step1_path}")
 
-        # Step 2: Partitioning
+    def run_step_2_partitioning(self):
+        """Run Step 2: Partitioning."""
+        df = self.dataframes.get("feature_engineered")
         step2_config = {
-            "target_col": config["target_col"],
-            "id_col": config["id_col"],
-            "seed": config["seed"],
-            "train_size": config["train_size"],
-            "val_size": config["val_size"],
-            "test_size": config["test_size"],
-            "stratify_cardinality_threshold": config["stratify_cardinality_threshold"]
+            "target_col": self.config["target_col"],
+            "id_col": self.config["id_col"],
+            "seed": self.config["seed"],
+            "train_size": self.config["train_size"],
+            "val_size": self.config["val_size"],
+            "test_size": self.config["test_size"],
+            "stratify_cardinality_threshold": self.config["stratify_cardinality_threshold"]
         }
-        step2_hash = make_param_hash({**config, **step2_config})  # Combine global config with step-specific config
-
-        # Log execution time for Partitioning
-        partitioning_start = time.time()
+        step2_hash = make_param_hash({**self.config, **step2_config})
         splits, step2_path = run_partitioning(
-            df=df_fe,
+            df=df,
             id_col=step2_config["id_col"],
             target_col=step2_config["target_col"],
             param_hash=step2_hash,
@@ -136,54 +121,74 @@ def run_pipeline(config: dict, global_hash: str) -> None:
             stratify_cardinality_threshold=step2_config["stratify_cardinality_threshold"],
             use_mlflow=True
         )
-        logging.info(f"Partitioning completed in {time.time() - partitioning_start:.2f} seconds.")
-
+        self.dataframes.update(splits)
+        self.hashes["partitioning"] = step2_hash
+        self.paths["partitioning"] = step2_path
         log_to_global_registry({
             "step": "partitioning",
             "hash": step2_hash,
-            "global_hash": global_hash,  # Include global hash for traceability
+            "global_hash": self.global_hash,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "config": step2_config,
             "output_dir": step2_path
         })
-        logging.info(f"[main] Partitioning artifacts saved at: {step2_path}")
-        logging.info(f"Data partitioning completed. Partitioned data saved to: {step2_path}")
+        logging.info(f"[Partitioning] Artifacts saved at: {step2_path}")
 
-        # === STEP 3: Numeric Conversion + One-Hot Encoding ===
+    def run_step_3_numeric_conversion(self):
+        """Run Step 3: Numeric Conversion + One-Hot Encoding."""
+        df = self.dataframes.get("feature_engineered")
         step3_config = {
-            "target_col": config["target_col"],
-            "c1": 10,
-            "c2": 0.01,
-            "b1": True,
-            "c3": 10,
-            "id_like_exempt": True
+            "target_col": self.config["target_col"],
+            "c1": self.config["c1"],
+            "c2": self.config["c2"],
+            "b1": self.config["b1"],
+            "c3": self.config["c3"],
+            "id_like_exempt": self.config["id_like_exempt"]
         }
         step3_hash = make_param_hash(step3_config)
-
-        # Log execution time for Numeric Conversion
-        numeric_conversion_start = time.time()
         df_numeric, step3_path = run_numeric_conversion(
-            df=df_fe,
+            df=df,
             target_col=step3_config["target_col"],
             param_hash=step3_hash,
             config=step3_config,
             use_mlflow=True
         )
-        logging.info(f"Numeric Conversion completed in {time.time() - numeric_conversion_start:.2f} seconds.")
-
+        self.dataframes["numeric"] = df_numeric
+        self.hashes["numeric_conversion"] = step3_hash
+        self.paths["numeric_conversion"] = step3_path
         log_to_global_registry({
             "step": "numeric_conversion",
             "hash": step3_hash,
+            "global_hash": self.global_hash,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "config": step3_config,
             "output_dir": step3_path
         })
+        logging.info(f"[Numeric Conversion] Artifacts saved at: {step3_path}")
 
-        logging.info(f"[main] Numeric conversion saved at: {step3_path}")
-        logging.info(f"Pipeline execution completed in {time.time() - start_time:.2f} seconds.")
-    except Exception as e:
-        logging.error(f"An error occurred during pipeline execution: {e}", exc_info=True)
-        raise
+    def run_all(self):
+        """Run all pipeline steps."""
+        self.validate_config()
+        self.create_directories()
+
+        # Check if the database exists, if not, generate synthetic data
+        db_path = "fraud_poc.db"
+        if not os.path.exists(db_path):
+            logging.info("[Pipeline] Database not found. Generating synthetic data...")
+            generate_data()
+        else:
+            logging.info("[Pipeline] Database found. Skipping data generation.")
+
+        # Load data
+        self.dataframes["raw"] = load_data(db_path)
+
+        # Run pipeline steps
+        self.run_step_0_eda()
+        self.run_step_1_feature_engineering()
+        self.run_step_2_partitioning()
+        self.run_step_3_numeric_conversion()
+        logging.info("[Pipeline] All steps completed successfully.")
+
 
 if __name__ == "__main__":
     # Define the global configuration for the entire pipeline
@@ -202,8 +207,6 @@ if __name__ == "__main__":
         "id_like_exempt": True
     }
 
-    # Compute the global hash for the entire pipeline
-    global_hash = make_param_hash(config)
-
     # Run the pipeline
-    run_pipeline(config, global_hash)
+    pipeline = FraudPipeline(config)
+    pipeline.run_all()
