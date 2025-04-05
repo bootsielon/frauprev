@@ -196,8 +196,13 @@ if __name__ == "__main__":
         "dtypes": {col: str(df[col].dtype) for col in df.columns}
     })
     print(f"[DEBUG] Hash for feature engineering: {hash}")  # Debugging statement
-    df_result = run_feature_engineering(df, use_mlflow=True, param_hash=hash)
-    print(f"[DEBUG] Feature-engineering data type: {type(df_result)}")  # Debugging statement
+    df_result = run_feature_engineering(df, use_mlflow=True, param_hash=hash, config={
+        "columns": sorted(df.columns),
+        "dtypes": {col: str(df[col].dtype) for col in df.columns}
+    })
+    print(f"[DEBUG] Feature-engineering df result data type: {type(df_result)}")  # Debugging statement
+    # Check if df_result is a tuple (e.g., (df, step_dir))
+    # If it is a tuple, unpack it to get the DataFrame and step_dir
     if isinstance(df_result, tuple):
         df = df_result[0]  # Assuming the first element is the DataFrame
         print(f"[DEBUG] Unpacked feature-engineered data type: {type(df)}")
