@@ -105,22 +105,22 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def save_numerical_histograms(df: pd.DataFrame, target_col: str, output_dir: str):
+def save_numerical_histograms(df: pd.DataFrame, target_column: str, output_dir: str):
     """
     Save histograms for numerical columns and class distribution plot.
 
     Args:
         df (pd.DataFrame): Input DataFrame.
-        target_col (str): Target column for class distribution.
+        target_column (str): Target column for class distribution.
         output_dir (str): Directory to save the plots.
     """
-    sns.countplot(x=target_col, data=df)
+    sns.countplot(x=target_column, data=df)
     plt.title("Class Distribution")
     plt.savefig(os.path.join(output_dir, "class_distribution.png"))
     plt.close()
 
     for col in df.select_dtypes(include=["float64", "int64"]).columns:
-        if col == target_col:
+        if col == target_column:
             continue
         sns.histplot(df[col], bins=50, kde=True)
         plt.title(f"{col} Distribution")
@@ -130,26 +130,25 @@ def save_numerical_histograms(df: pd.DataFrame, target_col: str, output_dir: str
 
 def run_eda(
     df: pd.DataFrame,
-    target_col: str,
-    param_hash: str,
     config: dict,
+    param_hash: str,
     output_dir: str = "artifacts/eda",
     use_mlflow: bool = False
 ) -> str:
     """
-    Run Exploratory Data Analysis and save outputs using hash-based versioning.
+    Run exploratory data analysis on the input DataFrame.
 
     Args:
-        df: Input DataFrame
-        target_col: Name of the target variable
-        param_hash: Unique hash for this config
-        config: Full configuration dictionary
-        output_dir: Base output folder for artifacts
+        df: Raw input DataFrame
+        config: Configuration dictionary (must include 'target_column')
+        param_hash: Hash derived from the EDA config
+        output_dir: Base output directory for artifacts
         use_mlflow: Whether to log outputs to MLflow
 
     Returns:
-        Path to the output folder
+        Path to the output folder containing artifacts
     """
+    target_column = config["target_column"]
     step_dir = os.path.join(output_dir, f"eda_{param_hash}")
     summary_file = os.path.join(step_dir, f"summary_stats_{param_hash}.csv")
     metadata_file = os.path.join(step_dir, f"metadata_{param_hash}.json")
@@ -157,7 +156,7 @@ def run_eda(
     manifest_file = os.path.join(step_dir, "manifest.json")
 
     if os.path.exists(manifest_file) and os.path.exists(summary_file):
-        print(f"[EDA] Skipping — cached at {step_dir}")
+        print(f"[STEP 0] Skipping — cached at {step_dir}")
         return step_dir
 
     os.makedirs(step_dir, exist_ok=True)
@@ -180,32 +179,32 @@ def run_eda(
         json.dump(metadata, f, indent=2)
 
     # Save class distribution plot
-    sns.countplot(x=target_col, data=df)
+    sns.countplot(x=target_column, data=df)
     plt.title("Class Distribution")
     plt.savefig(class_plot_file)
     plt.close()
 
-    # Save manifest
+    # Save manifest with full config and outputs
     manifest = {
         "step": "eda",
         "param_hash": param_hash,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.utcnow().isoformat(),
         "config": config,
         "output_dir": step_dir,
         "outputs": {
-            "summary_stats": summary_file,
-            "metadata": metadata_file,
+            "summary_stats_csv": summary_file,
+            "column_metadata_json": metadata_file,
             "class_distribution_plot": class_plot_file
         }
     }
     with open(manifest_file, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    # Log artifacts to MLflow
+    # Log to MLflow if enabled
     if use_mlflow:
-        with mlflow.start_run(run_name=f"EDA_{param_hash}") as run:
-            mlflow.set_tags({"step": "eda", "hash": param_hash})
-            mlflow.log_params({"target_col": target_col})
+        with mlflow.start_run(run_name=f"EDA_{param_hash}"):
+            mlflow.set_tags({"step": "eda", "param_hash": param_hash})
+            mlflow.log_params({"target_column": target_column})
             mlflow.log_artifacts(step_dir, artifact_path="eda")
 
     return step_dir
@@ -214,11 +213,11 @@ def run_eda(
 if __name__ == "__main__":
     df = load_data()
     config = {
-        "target_col": "is_fraud",
+        "target_column": "is_fraud",
         "columns": sorted(df.columns),
         "dtypes": {col: str(df[col].dtype) for col in df.columns}
     }
     param_hash = make_param_hash(config)
-    run_eda(df, target_col=config["target_col"], param_hash=param_hash, config=config, use_mlflow=True)
+    run_eda(df, config=config, param_hash=param_hash, use_mlflow=True)
     print("EDA completed. Outputs saved to 'artifacts/eda' directory.")
     print(df.head())  # Display the first few rows of the DataFrame
