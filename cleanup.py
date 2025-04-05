@@ -28,7 +28,8 @@ if __name__ == "__main__":
         "artifacts",
         "artifacts/eda",
         "artifacts/step1",
-        "artifacts/step2"
+        "artifacts/step2",
+        "artifacts/step3",
     ]
     # Path to the generated database
     db_path = "fraud_poc.db"
