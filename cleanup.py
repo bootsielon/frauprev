@@ -31,8 +31,15 @@ if __name__ == "__main__":
         "artifacts/step1",
         "artifacts/step2",
         "artifacts/step3",
-        
-    ]
+        "artifacts/step4",
+        "artifacts/step5",
+        "artifacts/step6",
+        "artifacts/step7",
+        "artifacts/step8",
+        "artifacts/step9",
+        "artifacts/step10",
+        "artifacts/step11",
+        "artifacts/step12",    ]
     # Path to the generated database
     db_path = "fraud_poc.db"
     cleanup_artifacts(artifact_dirs, db_path)

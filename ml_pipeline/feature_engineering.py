@@ -1,155 +1,88 @@
+import os
+import json
+from datetime import datetime
 import pandas as pd
 import numpy as np
-import json
-import os
-from datetime import datetime, timezone
 import mlflow
-from utils import make_param_hash, load_data
+from .utils import make_param_hash
+from .utils import log_registry
 
-def add_derived_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+
+def feature_engineering(self) -> None:
     """
-    Adds derived features to the DataFrame based on existing columns.
-
-    Args:
-        df (pd.DataFrame): Input DataFrame with transaction data.
-    
-    
-    Returns:
-        tuple: Transformed DataFrame and list of derived feature names.
+    Step 1: Add derived features, drop zero-variance or constant columns.
+    Updates: self.dataframes["feature_engineered"], self.paths["feature_engineering"], self.hashes["feature_engineering"]
     """
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df["account_creation_date_client"] = pd.to_datetime(df["account_creation_date_client"])
-    df["account_creation_date_merchant"] = pd.to_datetime(df["account_creation_date_merchant"])
+    df = self.dataframes["raw"]
+    step = "feature_engineering"
 
-    df["transaction_hour"] = df["timestamp"].dt.hour
-    df["transaction_day"] = df["timestamp"].dt.dayofweek
-    df["client_account_age_days"] = (df["timestamp"] - df["account_creation_date_client"]).dt.days
-    df["merchant_account_age_days"] = (df["timestamp"] - df["account_creation_date_merchant"]).dt.days
-
-    df.drop(columns=["timestamp", "account_creation_date_client", "account_creation_date_merchant"], inplace=True)
-    return df, ["transaction_hour", "transaction_day", "client_account_age_days", "merchant_account_age_days"]
-
-def drop_low_variance_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    zero_var = df.loc[:, df.nunique(dropna=False) <= 1].columns.tolist()
-    df = df.drop(columns=zero_var)
-
-    non_numeric_single_val = [
-        col for col in df.select_dtypes(include="object").columns
-        if df[col].nunique(dropna=False) == 1
-    ]
-    df = df.drop(columns=non_numeric_single_val)
-
-    return df, {
-        "zero_variance": zero_var,
-        "non_numeric_single_value": non_numeric_single_val
+    config = {
+        "columns": sorted(df.columns),
+        "dtypes": {col: str(df[col].dtype) for col in df.columns}
     }
-
-
-def run_feature_engineering(
-    df: pd.DataFrame,
-    param_hash: str,
-    config: dict,
-    output_dir: str = "artifacts/step1",
-    use_mlflow: bool = False
-) -> tuple[pd.DataFrame, str]:
-    """
-    Adds derived features and drops zero-variance and single-unique non-numeric columns.
-    Uses hashing of df schema to cache outputs. Optionally logs artifacts to MLflow.
-
-    Args:
-        df (pd.DataFrame): Input dataframe
-        param_hash (str): Hash string for caching
-        config (dict): Configuration dictionary
-        output_dir (str): Base directory to store outputs
-        use_mlflow (bool): Whether to log artifacts to MLflow
-
-    Returns:
-        tuple: Transformed dataframe and path to output folder
-    """
-    # Ensure param_hash is a valid string for filenames
-    if not isinstance(param_hash, str):
-        param_hash = param_hash.get("eda", str(param_hash))
-    # Construct paths using valid param_hash
-    step_dir = os.path.join(output_dir, f"step1_{param_hash}")
-    final_csv = os.path.join(step_dir, f"step1_feature_engineered_{param_hash}.csv")
-    registry_file = os.path.join(step_dir, f"registry_{param_hash}.json")
-    meta_file = os.path.join(step_dir, f"feature_metadata_{param_hash}.json")
+    param_hash = make_param_hash(config)
+    step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
     manifest_file = os.path.join(step_dir, "manifest.json")
 
-    if os.path.exists(manifest_file) and os.path.exists(final_csv):
-        print(f"[STEP 1] Skipping: cached result at {step_dir}")
-        return pd.read_csv(final_csv), step_dir
+    if os.path.exists(manifest_file):
+        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
+        self.paths[step] = step_dir
+        self.hashes[step] = param_hash
+        self.dataframes["feature_engineered"] = pd.read_csv(os.path.join(step_dir, f"{step}_{param_hash}.csv"))
+        return
 
     os.makedirs(step_dir, exist_ok=True)
+    df_fe = df.copy()
 
-    # Ensure df is a pandas DataFrame
-    if not isinstance(df, pd.DataFrame):
-        try:
-            df = df.data
-        except AttributeError:
-            df = load_data()   # Fallback to loading data
+    # Feature engineering example: timestamp-based
+    if "timestamp" in df_fe.columns:
+        df_fe["transaction_hour"] = pd.to_datetime(df_fe["timestamp"]).dt.hour
+        df_fe["transaction_dayofweek"] = pd.to_datetime(df_fe["timestamp"]).dt.dayofweek
 
-    # Add derived features
-    df, derived = add_derived_features(df)
+    if "account_creation_date_client" in df_fe.columns:
+        df_fe["client_account_age_days"] = (
+            pd.to_datetime(df_fe["timestamp"]) - pd.to_datetime(df_fe["account_creation_date_client"])
+        ).dt.days
 
-    # Drop low-variance features
-    df, dropped = drop_low_variance_features(df)
+    if "account_creation_date_merchant" in df_fe.columns:
+        df_fe["merchant_account_age_days"] = (
+            pd.to_datetime(df_fe["timestamp"]) - pd.to_datetime(df_fe["account_creation_date_merchant"])
+        ).dt.days
 
-    registry = {
-        "param_hash": param_hash,
-        "final_features": list(df.columns),
-        "derived_features": derived,
-        "dropped_features": dropped
-    }
-    with open(registry_file, "w") as f:
-        json.dump(registry, f, indent=2)
+    # Drop constant columns (0 variance or same value)
+    dropped = []
+    for col in df_fe.columns:
+        if df_fe[col].nunique(dropna=False) <= 1:
+            dropped.append(col)
+    df_fe.drop(columns=dropped, inplace=True)
 
-    metadata = {
-        "param_hash": param_hash,
-        "columns": {
-            col: {
-                "dtype": str(df[col].dtype),
-                "cardinality": int(df[col].nunique()),
-                "nulls": int(df[col].isnull().sum())
-            } for col in df.columns
-        }
-    }
-    with open(meta_file, "w") as f:
-        json.dump(metadata, f, indent=2)
+    output_csv = os.path.join(step_dir, f"{step}_{param_hash}.csv")
+    drop_log = os.path.join(step_dir, f"dropped_features_{param_hash}.json")
 
-    df.to_csv(final_csv, index=False)
+    df_fe.to_csv(output_csv, index=False)
+    with open(drop_log, "w") as f:
+        json.dump({"dropped_features": dropped}, f, indent=2)
 
     manifest = {
-        "step": "feature_engineering",
+        "step": step,
         "param_hash": param_hash,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.utcnow().isoformat(),
         "config": config,
         "output_dir": step_dir,
         "outputs": {
-            "feature_engineered_csv": final_csv,
-            "registry": registry_file,
-            "metadata": meta_file
+            "engineered_csv": output_csv,
+            "dropped_features": drop_log
         }
     }
     with open(manifest_file, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    if use_mlflow:
-        with mlflow.start_run(run_name=f"Step1_FeatureEng_{param_hash}"):
-            mlflow.set_tags({"step": "feature_engineering", "hash": param_hash})
-            mlflow.log_params({"num_final_features": len(df.columns)})
-            mlflow.log_artifacts(step_dir, artifact_path="feature_engineering")
+    if self.config.get("use_mlflow", False):
+        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+            mlflow.set_tags({"step": step, "param_hash": param_hash})
+            mlflow.log_artifacts(step_dir, artifact_path=step)
 
-    return df, step_dir
-
-
-if __name__ == "__main__":
-    df = load_data()
-    config = {
-        "columns": sorted(list(df.columns)),
-        "dtypes": {col: str(df[col].dtype) for col in df.columns}
-    }
-    param_hash = make_param_hash(config)
-    df, step_dir = run_feature_engineering(df, param_hash, config, use_mlflow=True)
-    print(f"Feature engineering completed. Engineered data saved to '{step_dir}' directory.")
-    print(df.head())
+    log_registry(step, param_hash, config, step_dir)
+    self.dataframes["feature_engineered"] = df_fe
+    self.paths[step] = step_dir
+    self.hashes[step] = param_hash

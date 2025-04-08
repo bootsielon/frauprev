@@ -8,7 +8,7 @@ from ml_pipeline.eda import run_eda, make_param_hash as make_eda_hash
 from ml_pipeline.feature_engineering import run_feature_engineering, make_param_hash as make_step1_hash
 from ml_pipeline.partitioning import run_partitioning, make_param_hash as make_step2_hash
 from ml_pipeline.numeric_conversion import run_numeric_conversion
-from utils import load_data, log_to_global_registry, make_param_hash  # Fix: Import make_param_hash from utils
+from ml_pipeline.utils import load_data, log_to_global_registry, make_param_hash  # Fix: Import make_param_hash from utils
 from gen_data import main as generate_data
 from ml_pipeline.base import MLPipeline
 

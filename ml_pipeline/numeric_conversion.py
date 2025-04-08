@@ -1,141 +1,444 @@
-import pandas as pd
 import os
 import json
-from datetime import datetime
+import pandas as pd
+import numpy as np
+from datetime import datetime, timezone
 import mlflow
+from .utils import make_param_hash
+from .utils import log_registry
 
 
-def run_numeric_conversion(
-    df: pd.DataFrame,
-    target_col: str,
-    param_hash: str,
-    config: dict,
-    output_dir: str = "artifacts/step3",
-    use_mlflow: bool = False
-) -> tuple[pd.DataFrame, str]:
+def numeric_conversion(self) -> None:
     """
-    Convert categorical features to numeric using cardinality rules and one-hot encoding.
+    Step 3: Convert non-numeric variables to numeric representations using cardinality-based rules.
+    Includes one-hot encoding and full mapping traceability.
 
-    Args:
-        df: Input DataFrame
-        target_col: Name of the target variable
-        param_hash: Hash generated from config
-        config: Dictionary with conversion parameters (c1, c2, b1, c3)
-        output_dir: Folder for saving artifacts
-        use_mlflow: Whether to log to MLflow
-
-    Returns:
-        Tuple of transformed DataFrame and artifact output path
+    Updates:
+        self.dataframes["train_num"], ["val_num"], ["test_num"]
+        self.paths["numeric_conversion"]
+        self.hashes["numeric_conversion"]
     """
-    step_dir = os.path.join(output_dir, f"step3_{param_hash}")
-    final_csv = os.path.join(step_dir, f"numeric_converted_{param_hash}.csv")
-    binning_file = os.path.join(step_dir, f"category_binning_{param_hash}.json")
-    mapping_file = os.path.join(step_dir, f"onehot_mapping_{param_hash}.json")
-    drop_file = os.path.join(step_dir, f"dropped_features_{param_hash}.json")
+    step = "numeric_conversion"
+    train_df = self.dataframes["train"]
+    val_df = self.dataframes["val"]
+    test_df = self.dataframes["test"]
+    excluded_df = self.dataframes.get("excluded", None)
+    # excluded_numeric = excluded_df.copy() if excluded_df is not None else None
+    dataset_size = len(train_df)  # + (len(excluded_numeric) if excluded_numeric is not None else 0)
+
+    config = {
+        "c1": self.config["c1"],  # cardinality threshold for one-hot
+        "c2": self.config["c2"],  # fraction threshold for rare category reduction
+        "b1": self.config["b1"],  # treat high-cardinality vars as mid if True
+        "c3": self.config["c3"],  # log-scale threshold for ID-like
+        "id_like_exempt": self.config.get("id_like_exempt", True)
+    }
+
+    param_hash = make_param_hash(config)
+    step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
     manifest_file = os.path.join(step_dir, "manifest.json")
 
-    if os.path.exists(manifest_file) and os.path.exists(final_csv):
-        print(f"[STEP 3] Skipping — cached at {step_dir}")
-        return pd.read_csv(final_csv), step_dir
+    if os.path.exists(manifest_file):
+        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
+        self.paths[step] = step_dir
+        self.hashes[step] = param_hash
+        self.dataframes["train_num"] = pd.read_csv(os.path.join(step_dir, f"train_num_{param_hash}.csv"))
+        self.dataframes["val_num"] = pd.read_csv(os.path.join(step_dir, f"val_num_{param_hash}.csv"))
+        self.dataframes["test_num"] = pd.read_csv(os.path.join(step_dir, f"test_num_{param_hash}.csv"))
+        #if excluded_df is not None:
+        self.dataframes["excluded_num"] = pd.read_csv(os.path.join(step_dir, f"excluded_num_{param_hash}.csv")) if excluded_df is not None else None
+        return
 
     os.makedirs(step_dir, exist_ok=True)
+    train_numeric = train_df.copy()
+    dropped = []
+    encoded_mapping = {}
+    inverse_mapping = {}
+    grouping_map = {}
+    id_like_columns = []
 
-    df = df.copy()
-    total_rows = len(df)
-    binning_map = {}
-    onehot_map = {}
-    reverse_map = {}
-    dropped_features = []
-    id_like_features = []
-
-    for col in df.select_dtypes(include="object").columns:
-        if col == target_col:
+    # First, identify and drop constant columns (no variance or all null)
+    constant_columns = []
+    for col in train_numeric.columns:
+        # Check for completely null columns
+        if train_numeric[col].isna().all():
+            constant_columns.append(col)
+            grouping_map[col] = {"strategy": "drop_constant", "reason": "all_null"}
             continue
-        cardinality = df[col].nunique(dropna=False)
-
-        is_id_like = total_rows / cardinality <= config["c3"]
-        low_card = cardinality <= config["c1"]
-        mid_card = cardinality <= int(config["c2"] * total_rows)
-        high_card = not (low_card or mid_card)
-
-        if is_id_like and config.get("id_like_exempt", True):
-            id_like_features.append(col)
-            continue
-
-        if low_card:
-            continue  # Keep as-is
-        elif mid_card or (high_card and config["b1"]):
-            top_categories = df[col].value_counts().nlargest(config["c1"]).index
-            binning_map[col] = {
-                "type": "top_k",
-                "top_k": config["c1"],
-                "retained": list(top_categories)
-            }
-            df[col] = df[col].apply(lambda x: x if x in top_categories else "Other")
+            
+        # Check for numeric columns with zero variance
+        if pd.api.types.is_numeric_dtype(train_numeric[col]):
+            if train_numeric[col].nunique() <= 1:
+                constant_columns.append(col)
+                grouping_map[col] = {"strategy": "drop_constant", "reason": "zero_variance_numeric"}
+                continue
+        
+        # Check for categorical columns with only one value
         else:
-            binning_map[col] = {
-                "type": "dropped",
-                "cardinality": cardinality
+            if train_numeric[col].nunique() <= 1:
+                constant_columns.append(col)
+                grouping_map[col] = {"strategy": "drop_constant", "reason": "single_value_categorical"}
+                continue
+
+    # Drop constant columns
+    if constant_columns:
+        train_numeric.drop(columns=constant_columns, inplace=True)
+        dropped.extend(constant_columns)
+        print(f"[{step.upper()}] Dropped {len(constant_columns)} constant columns: {constant_columns}")
+
+    for col in train_df.columns:
+        if col in constant_columns:
+            continue
+            
+        if pd.api.types.is_numeric_dtype(train_df[col]):
+            continue
+
+        cardinality = train_df[col].nunique(dropna=False)
+        col_fraction = cardinality / dataset_size
+
+        if cardinality <= config["c1"]:
+            # Low cardinality: keep and one-hot later
+            continue
+
+        elif col_fraction <= config["c2"]:
+            # Mid cardinality: keep top C1 categories, rest → "Other"
+            top_cats = train_df[col].value_counts().nlargest(config["c1"]).index
+            train_numeric[col] = train_df[col].where(train_df[col].isin(top_cats), other="Other")
+            grouping_map[col] = {
+                "strategy": "top_c1+other",
+                "top_categories": top_cats.tolist()
             }
-            dropped_features.append(col)
 
-    df.drop(columns=dropped_features + id_like_features, inplace=True)
+        elif config["b1"]:
+            # High cardinality but treating as mid
+            top_cats = train_df[col].value_counts().nlargest(config["c1"]).index
+            train_numeric[col] = train_df[col].where(train_df[col].isin(top_cats), other="Other")
+            grouping_map[col] = {
+                "strategy": "high_as_mid",
+                "top_categories": top_cats.tolist()
+            }
 
-    cat_cols = df.select_dtypes(include="object").columns
-    df_encoded = pd.get_dummies(df, columns=cat_cols, drop_first=False)
+        elif config["id_like_exempt"]:
+            log_ratio = np.log10(dataset_size) / np.log10(max(cardinality, 2))
+            if 1 <= log_ratio <= config["c3"]:
+                id_like_columns.append(col)
+                dropped.append(col)
+                train_numeric.drop(columns=[col], inplace=True)
+                grouping_map[col] = {"strategy": "id_like_exempt"}
+                continue
 
-    for orig_col in cat_cols:
-        mapped_cols = [col for col in df_encoded.columns if col.startswith(f"{orig_col}_")]
-        onehot_map[orig_col] = mapped_cols
-        for new_col in mapped_cols:
-            reverse_map[new_col] = orig_col
+            # otherwise drop
+            dropped.append(col)
+            grouping_map[col] = {"strategy": "drop"}
 
-    df_encoded.to_csv(final_csv, index=False)
+        else:
+            dropped.append(col)
+            train_numeric.drop(columns=[col], inplace=True)
+            grouping_map[col] = {"strategy": "drop"}
 
-    with open(binning_file, "w") as f:
-        json.dump({"param_hash": param_hash, "config": config, "binning_map": binning_map}, f, indent=2)
-    with open(mapping_file, "w") as f:
-        json.dump({"param_hash": param_hash, "mapping": onehot_map, "reverse_mapping": reverse_map}, f, indent=2)
-    with open(drop_file, "w") as f:
-        json.dump({"param_hash": param_hash, "dropped_features": dropped_features, "id_like": id_like_features}, f, indent=2)
+    # Process val and test similar to train
+    val_numeric = val_df.copy()
+    test_numeric = test_df.copy()
+    excluded_numeric = excluded_df.copy() if excluded_df is not None else None
+
+    # Apply same transformations to val and test
+    for col in train_df.columns:
+        if col in dropped:
+            if col in val_numeric.columns:
+                val_numeric.drop(columns=[col], inplace=True)
+            if col in test_numeric.columns:
+                test_numeric.drop(columns=[col], inplace=True)
+            if excluded_numeric is not None and col in excluded_numeric.columns:
+                excluded_numeric.drop(columns=[col], inplace=True)
+        elif col in grouping_map:
+            strategy = grouping_map[col]["strategy"]
+            if strategy in ["top_c1+other", "high_as_mid"] and "top_categories" in grouping_map[col]:
+                top_cats = grouping_map[col]["top_categories"]
+                if col in val_numeric.columns:
+                    val_numeric[col] = val_numeric[col].where(val_numeric[col].isin(top_cats), other="Other")
+                if col in test_numeric.columns:
+                    test_numeric[col] = test_numeric[col].where(test_numeric[col].isin(top_cats), other="Other")
+                if excluded_numeric is not None and col in excluded_numeric.columns:
+                    excluded_numeric[col] = excluded_numeric[col].where(excluded_numeric[col].isin(top_cats), other="Other")
+    
+    # Make sure val_numeric and test_numeric have the same columns as train_numeric
+    # Keep only columns that are in train_numeric
+    val_numeric = val_numeric[[col for col in val_numeric.columns if col in train_numeric.columns]]
+    test_numeric = test_numeric[[col for col in test_numeric.columns if col in train_numeric.columns]]
+    excluded_numeric = excluded_numeric[[col for col in excluded_numeric.columns if col in train_numeric.columns]] if excluded_numeric is not None else None
+
+    # Handle missing values
+    imputation_stats = {}
+    
+    # Get central tendency preference from config
+    central_tendency = self.config.get("central_tendency", "median")  # Default to median if not specified
+    
+    # Process all datasets in parallel
+    datasets = {
+        "train": train_numeric,
+        "val": val_numeric,
+        "test": test_numeric,
+        "excluded": excluded_numeric,
+    }
+    
+    # Add excluded dataset if available
+    if "excluded" in self.dataframes:
+        excluded_df = self.dataframes["excluded"].copy()
+        excluded_numeric = excluded_df.copy()
+        
+        # Apply same transformations to excluded dataset
+        for col in train_df.columns:
+            if col in dropped:
+                if col in excluded_numeric.columns:
+                    excluded_numeric.drop(columns=[col], inplace=True)
+            elif col in grouping_map:
+                strategy = grouping_map[col]["strategy"]
+                if strategy in ["top_c1+other", "high_as_mid"] and "top_categories" in grouping_map[col]:
+                    top_cats = grouping_map[col]["top_categories"]
+                    if col in excluded_numeric.columns:
+                        excluded_numeric[col] = excluded_numeric[col].where(excluded_numeric[col].isin(top_cats), other="Other")
+        
+        # Keep only columns that are in train_numeric
+        excluded_numeric = excluded_numeric[[col for col in excluded_numeric.columns if col in train_numeric.columns]]
+        datasets["excluded"] = excluded_numeric
+    
+    # For numeric columns, impute with central tendency
+    numeric_cols = train_numeric.select_dtypes(include=['number']).columns
+    for col in numeric_cols:
+        # Calculate central value based on config
+        if central_tendency == "mean":
+            central_value = train_numeric[col].mean()
+        else:  # median
+            central_value = train_numeric[col].median()
+            
+        imputation_stats[col] = {
+            "strategy": central_tendency, 
+            "value": central_value
+        }
+        
+        # Impute missing values across all datasets
+        for dataset_name, dataset in datasets.items():
+            if col in dataset.columns:
+                dataset[col].fillna(central_value, inplace=True)
+    
+    # For categorical columns, add indicator and impute with mode
+    categorical_cols = train_numeric.select_dtypes(include=["object", "category"]).columns
+    for col in categorical_cols:
+        # Create indicator columns for missing values within the column
+        for dataset_name, dataset in datasets.items():
+            if col in dataset.columns:
+                # Add is_NA indicator for null values
+                missing_mask = dataset[col].isna() | (dataset[col] == "")
+                dataset[f"{col}_is_NA"] = missing_mask.astype(int)
+        
+        # Calculate mode on training data
+        col_mode = train_numeric[col].mode()[0] if not train_numeric[col].mode().empty else "MISSING"
+        imputation_stats[col] = {"strategy": "mode", "value": col_mode}
+        
+        # Impute missing values across all datasets
+        for dataset_name, dataset in datasets.items():
+            if col in dataset.columns:
+                dataset[col].fillna(col_mode, inplace=True)
+                dataset[col].replace("", col_mode, inplace=True)
+    
+    # One-hot encode categorical columns for all datasets
+    categorical_cols = train_numeric.select_dtypes(include=["object", "category"]).columns.tolist()
+    encoded_datasets = {}
+    
+    for dataset_name, dataset in datasets.items():
+        encoded_datasets[dataset_name] = pd.get_dummies(dataset, columns=categorical_cols, drop_first=False)
+    
+    train_encoded = encoded_datasets["train"]
+    val_encoded = encoded_datasets["val"]
+    test_encoded = encoded_datasets["test"]
+    if "excluded" in encoded_datasets:
+        excluded_encoded = encoded_datasets["excluded"]
+    
+    # Ensure column consistency across all datasets
+    for dataset_name, dataset in encoded_datasets.items():
+        if dataset_name == "train":
+            continue
+            
+        # Add missing columns with zeros
+        for col in train_encoded.columns:
+            if col not in dataset.columns:
+                dataset[col] = 0
+        
+        # Remove extra columns
+        extra_cols = [col for col in dataset.columns if col not in train_encoded.columns]
+        if extra_cols:
+            dataset.drop(columns=extra_cols, inplace=True)
+        
+        # Ensure same column order
+        encoded_datasets[dataset_name] = dataset[train_encoded.columns]
+    
+    # Update datasets with encoded versions
+    train_encoded = encoded_datasets["train"]
+    val_encoded = encoded_datasets["val"]
+    test_encoded = encoded_datasets["test"]
+    if "excluded" in encoded_datasets:
+        excluded_encoded = encoded_datasets["excluded"]
+
+    numeric_train_csv = os.path.join(step_dir, f"train_num_{param_hash}.csv")
+    numeric_val_csv = os.path.join(step_dir, f"val_num_{param_hash}.csv")
+    numeric_test_csv = os.path.join(step_dir, f"test_num_{param_hash}.csv")
+
+    if "excluded" in encoded_datasets:    
+        numeric_excluded_csv = os.path.join(step_dir, f"excluded_num_{param_hash}.csv")
+    
+
+    train_encoded.to_csv(numeric_train_csv, index=False)
+    val_encoded.to_csv(numeric_val_csv, index=False)
+    test_encoded.to_csv(numeric_test_csv, index=False)
+    if "excluded" in encoded_datasets:
+        excluded_encoded.to_csv(numeric_excluded_csv, index=False)
+
+    grouping_json = os.path.join(step_dir, f"grouping_map_{param_hash}.json")
+    mapping_json = os.path.join(step_dir, f"encoded_mapping_{param_hash}.json")
+
+    with open(grouping_json, "w") as f:
+        json.dump(grouping_map, f, indent=2)
+    with open(mapping_json, "w") as f:
+        json.dump({
+            "original_to_encoded": encoded_mapping,
+            "encoded_to_original": inverse_mapping
+        }, f, indent=2)
 
     manifest = {
-        "step": "numeric_conversion",
+        "step": step,
         "param_hash": param_hash,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "config": config,
         "output_dir": step_dir,
         "outputs": {
-            "csv": final_csv,
-            "binning": binning_file,
-            "onehot_mapping": mapping_file,
-            "drop_summary": drop_file
+            "train_num_csv": numeric_train_csv,
+            "val_num_csv": numeric_val_csv,
+            "test_num_csv": numeric_test_csv,
+            "grouping_map_json": grouping_json,
+            "encoded_mapping_json": mapping_json
         }
     }
+    
+    # Update imputation stats to the manifest
+    manifest["imputation_stats"] = imputation_stats
+    imputation_json = os.path.join(step_dir, f"imputation_stats_{param_hash}.json")
+    with open(imputation_json, "w") as f:
+        json.dump(imputation_stats, f, indent=2)
+    manifest["outputs"]["imputation_stats_json"] = imputation_json
+
+    # Store detailed metadata about the transformations
+    metadata = {
+        "dropped_columns": dropped,
+        "constant_columns": constant_columns if 'constant_columns' in locals() else [],
+        "id_like_columns": id_like_columns,
+        "grouping_map": grouping_map,
+        "imputation_stats": imputation_stats,
+        "original_columns": train_df.columns.tolist(),
+        "retained_numeric_columns": train_numeric.select_dtypes(include=['number']).columns.tolist(),
+        "retained_categorical_columns": train_numeric.select_dtypes(include=['object', 'category']).columns.tolist(),
+        "created_is_NA_columns": [f"{col}_is_NA" for col in train_numeric.select_dtypes(include=['object', 'category']).columns],
+        "encoded_columns": train_encoded.columns.tolist(),
+        "encoding_mapping": encoded_mapping,
+        "inverse_mapping": inverse_mapping,
+        "datasets_processed": list(datasets.keys())
+    }
+    
+    # Add metadata to manifest
+    manifest["metadata"] = metadata
+    metadata_json = os.path.join(step_dir, f"metadata_{param_hash}.json")
+    with open(metadata_json, "w") as f:
+        json.dump(metadata, f, indent=2)
+    manifest["outputs"]["metadata_json"] = metadata_json
+    
     with open(manifest_file, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    if use_mlflow:
-        with mlflow.start_run(run_name=f"Step3_Numeric_{param_hash}"):
-            mlflow.set_tags({"step": "numeric_conversion", "hash": param_hash})
-            mlflow.log_params(config)
-            mlflow.log_artifacts(step_dir, artifact_path="numeric_conversion")
+    if self.config.get("use_mlflow", False):
+        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+            mlflow.set_tags({"step": step, "param_hash": param_hash})
+            mlflow.log_artifacts(step_dir, artifact_path=step)
 
-    return df_encoded, step_dir
+    log_registry(step, param_hash, config, step_dir)
 
-
-if __name__ == "__main__":
-    from utils import load_data, make_param_hash
-
-    df_raw = load_data()
-    config = {
-        "target_col": "is_fraud",
-        "c1": 10,
-        "c2": 0.01,
-        "b1": True,
-        "c3": 10,
-        "id_like_exempt": True
+    # Store all artifacts and metadata in class state
+    self.dataframes["train_num"] = train_encoded
+    self.dataframes["val_num"] = val_encoded
+    self.dataframes["test_num"] = test_encoded
+    if "excluded" in encoded_datasets:
+        self.dataframes["excluded_num"] = excluded_encoded
+    
+    # This section is redundant - the excluded dataset is saved again
+    # if "excluded" in encoded_datasets:
+    #     # Save excluded dataset
+    #     excluded_numeric_csv = os.path.join(step_dir, f"excluded_num_{param_hash}.csv")
+    #     excluded_encoded.to_csv(excluded_numeric_csv, index=False)  # This is redundant - already saved above
+    #     # Add to manifest outputs
+    #     manifest["outputs"]["excluded_num_csv"] = excluded_numeric_csv  # Already added earlier
+        
+    # if "excluded" in self.dataframes:
+    #     # Ensure the excluded dataset has EXACTLY the same columns as train_encoded
+    #     if "excluded" in encoded_datasets:
+    #         # Make absolutely sure column order and presence matches exactly
+    #         for col in train_encoded.columns:
+    #             if col not in excluded_encoded.columns:
+    #                 excluded_encoded[col] = 0  # Redundant - columns already aligned earlier
+            
+    #         # Remove any extra columns not in train_encoded
+    #         extra_cols = [col for col in excluded_encoded.columns if col not in train_encoded.columns]
+    #         if extra_cols:
+    #             excluded_encoded.drop(columns=extra_cols, inplace=True)  # Redundant - already done in column consistency step
+                
+    #         # Ensure same column order as train_encoded
+    #         excluded_encoded = excluded_encoded[train_encoded.columns]  # Redundant - already done in column consistency step
+            
+    #     self.dataframes["excluded_num"] = excluded_encoded  # Redundant - already stored earlier
+    
+    # Track all features and their transformations
+    original_features = train_df.columns.tolist()
+    current_features = train_encoded.columns.tolist()
+    
+    # Track dropped features
+    all_dropped_features = dropped + constant_columns
+    
+    # Track transformed features mapping
+    transformed_features = {}
+    for col in train_df.select_dtypes(include=['object', 'category']).columns:
+        if col not in all_dropped_features:
+            # Find all one-hot encoded columns for this original feature
+            one_hot_cols = [c for c in train_encoded.columns if c.startswith(f"{col}_")]
+            transformed_features[col] = one_hot_cols
+    
+    # Register features for this stage
+    # self.register_features("numeric_conversion", current_features)
+    
+    # Track changes
+    # self.track_feature_changes( stage="numeric_conversion",dropped=all_dropped_features, transformed=transformed_features)
+    
+    # Store feature information explicitly
+    feature_info = {
+        "original_columns": original_features,
+        "encoded_columns": current_features,
+        "dropped_columns": all_dropped_features,
+        "transformation_mapping": transformed_features
     }
-    hash_id = make_param_hash(config)
-    df_num, out_path = run_numeric_conversion(df_raw, target_col=config["target_col"], param_hash=hash_id, config=config, use_mlflow=True)
-    print(f"[TEST] Numeric features saved to: {out_path}")
+    
+    feature_info_file = os.path.join(step_dir, f"feature_info_{param_hash}.json")
+    with open(feature_info_file, "w") as f:
+        json.dump(feature_info, f, indent=2)
+    manifest["outputs"]["feature_info_json"] = feature_info_file
+        
+    # Store all metadata in class state
+    self.paths[step] = step_dir
+    self.hashes[step] = param_hash
+    self.artifacts[step] = manifest["outputs"]
+    self.transformations[step] = {
+        "grouping_map": grouping_map,
+        "imputation_stats": imputation_stats,
+        "feature_columns": train_encoded.columns.tolist()  # Store the complete column list
+    }
+    
+    # Save the feature names explicitly for model training to ensure consistency
+    feature_names_file = os.path.join(step_dir, f"feature_names_{param_hash}.json")
+    with open(feature_names_file, "w") as f:
+        json.dump({"feature_names": train_encoded.columns.tolist()}, f, indent=2)
+    manifest["outputs"]["feature_names_json"] = feature_names_file

@@ -78,7 +78,7 @@ def generate_merchants(n=50):
         for _ in range(n)
     ]
 
-def generate_transactions(clients, merchants, n=1000):
+def generate_transactions(clients, merchants, n=10000):
     return [
         (
             fake.uuid4(),

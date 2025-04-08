@@ -1,34 +1,65 @@
 from ml_pipeline.base import MLPipeline
+from ml_pipeline.utils import make_param_hash
 
-if __name__ == "__main__":
+
+def main() -> None:
     configs = [
         {
-            "target_column": "is_fraud",  # Changed from target_col to match the expected key
-            "id_column": "transaction_id", # Changed from id_col to match
-            "random_state": 42,           # Changed from seed to match
+            "seed": 42,
+            "target_col": "is_fraud",
+            "id_col": "transaction_id",
+            "use_mlflow": True,
+            
             "train_size": 0.6,
-            "val_size": 0.1,
             "test_size": 0.3,
-            "stratify": True,             # Added to match expected parameter
-            "stratify_cardinality_threshold": 10,
-            "c1": 10,        # max categories to keep before 'Other'
-            "c2": 0.01,      # fraction threshold for rare category reduction
-            "b1": True,      # treat high as mid-cardinality
-            "c3": 10,        # log-scale threshold for ID-like exemption
-            "id_like_exempt": True,
-            "use_mlflow": True
-        }
+            "val_size": 0.1,
+            "use_stratification": False,
+            "use_downsampling": True,
+            # "stratify_cols": ["client_id", "merchant_id"],
+            "stratify_cardinality_threshold": 5,
+
+            # Step 3
+            "c1": 10,
+            "c2": 0.01,
+            "b1": True,
+            "c3": 5,
+
+            # Step 4
+            "s1": False,
+            "t1": False,
+
+            # Step 8
+            "shap_cutoff": 1 - 1e-5,  # 0.95,
+
+            # Step 10
+            "use_cluster_select": [True, False],
+            "save_fs_mods": False,
+
+            # Step 11
+            "k_folds": 5,
+            "opt_metric": "f1",
+            "minimize_metric": False,
+
+            # Step 12: Baseline hyperparameters
+            "baseline_hyperparams": {
+                "n_estimators": 100,
+                "max_depth": 6,
+                "learning_rate": 0.1,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "use_label_encoder": False,
+                "eval_metric": "logloss"
+            }
+        },
+        # Add more config dicts here
     ]
-    
-    for config in configs:
-        print(f"Running pipeline with configuration: {config}")
-        pipeline = MLPipeline(config)
-        
-        # Debug the pipeline state
-        print("[Debug] Initial pipeline state:", 
-              f"Dataframes keys: {list(pipeline.dataframes.keys() if pipeline.dataframes else [])}")
-        
+
+    for cfg in configs:
+        param_hash = make_param_hash(cfg)
+        print(f"\n=== Running pipeline for hash: {param_hash} ===")
+        pipeline = MLPipeline(cfg)
         pipeline.run_all()
-        
-        print("[Debug] Final pipeline state:", 
-              f"Dataframes keys: {list(pipeline.dataframes.keys() if pipeline.dataframes else [])}")
+
+
+if __name__ == "__main__":
+    main()

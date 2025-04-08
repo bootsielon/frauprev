@@ -5,7 +5,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import mlflow
-from utils import load_data, make_param_hash, log_registry
+from .utils import make_param_hash
+from .utils import log_registry
+
 
 def eda(self) -> None:
     """
@@ -16,7 +18,7 @@ def eda(self) -> None:
     self.dataframes["raw"] = df
 
     config = {
-        "target_column": self.config["target_column"],
+        "target_col": self.config["target_col"],
         "columns": sorted(df.columns),
         "dtypes": {col: str(df[col].dtype) for col in df.columns}
     }
@@ -51,13 +53,13 @@ def eda(self) -> None:
     with open(metadata_file, "w") as f:
         json.dump(metadata, f, indent=2)
 
-    sns.countplot(x=self.config["target_column"], data=df)
+    sns.countplot(x=self.config["target_col"], data=df)
     plt.title("Class Distribution")
     plt.savefig(class_plot_file)
     plt.close()
 
     manifest = {
-        "step": step_key,
+        "step": "eda",
         "param_hash": param_hash,
         "timestamp": datetime.utcnow().isoformat(),
         "config": config,
@@ -74,35 +76,9 @@ def eda(self) -> None:
     if self.config.get("use_mlflow", False):
         with mlflow.start_run(run_name=f"{step_key}_{param_hash}"):
             mlflow.set_tags({"step": step_key, "param_hash": param_hash})
-            mlflow.log_params({"target_column": self.config["target_column"]})
+            mlflow.log_params({"target_col": self.config["target_col"]})
             mlflow.log_artifacts(step_dir, artifact_path=step_key)
 
     log_registry(step=step_key, param_hash=param_hash, config=config, output_dir=step_dir)
     self.paths[step_key] = step_dir
     self.hashes[step_key] = param_hash
-
-# Helper function to mimic the original run_eda interface for testing.
-def run_eda(df: pd.DataFrame, config: dict, param_hash: str, output_dir: str = "artifacts/eda", use_mlflow: bool = False) -> str:
-    # Create a dummy pipeline object with the necessary attributes.
-    class DummyPipeline:
-        pass
-    dp = DummyPipeline()
-    dp.config = {"target_col": config["target_column"]}
-    dp.dataframes = {}
-    dp.paths = {}
-    dp.hashes = {}
-    dp.load_data = lambda db_path="fraud_poc.db": df
-    eda(dp)
-    return dp.paths.get("eda", output_dir)
-
-if __name__ == "__main__":
-    df = load_data()
-    config = {
-        "target_column": "is_fraud",
-        "columns": sorted(df.columns),
-        "dtypes": {col: str(df[col].dtype) for col in df.columns}
-    }
-    param_hash = make_param_hash(config)
-    run_eda(df, config=config, param_hash=param_hash, use_mlflow=True)
-    print("EDA completed. Outputs saved to 'artifacts/eda' directory.")
-    print(df.head())  # Display the first few rows of the DataFrame
