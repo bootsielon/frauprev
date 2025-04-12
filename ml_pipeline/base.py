@@ -76,6 +76,9 @@ class MLPipeline:
         numeric_conversion(self)
         scaling(self)
         model_baseline(self)
+        
+    
+    def run_later(self)-> None:
         shap_explainability(self)
         shap_selection(self)
         feature_correlation(self)

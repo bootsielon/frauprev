@@ -89,9 +89,9 @@ def model_baseline(self) -> None:
     
     # Basic configuration
     config = {
-        "n_estimators": self.config.get("n_estimators", 100),
-        "max_depth": self.config.get("max_depth", 3),
-        "learning_rate": self.config.get("learning_rate", 0.1),
+        "n_estimators": self.config.get("n_estimators", 400),
+        "max_depth": self.config.get("max_depth", 4),
+        "learning_rate": self.config.get("learning_rate", 0.01),
         "subsample": self.config.get("subsample", 0.8),
         "colsample_bytree": self.config.get("colsample_bytree", 0.8),
         "random_state": self.config.get("random_state", 42)
@@ -207,7 +207,7 @@ def model_baseline(self) -> None:
         colsample_bytree=config["colsample_bytree"],
         random_state=config["random_state"],
         use_label_encoder=False,
-        eval_metric='logloss'
+        eval_metric='auc'#'logloss'
     )
     
     # Set feature_names explicitly to avoid mismatch errors
