@@ -11,8 +11,7 @@ from sklearn.metrics import (
     confusion_matrix, accuracy_score
 )
 import mlflow
-from .utils import make_param_hash
-from .utils import log_registry
+from ml_pipeline.utils import make_param_hash, log_registry
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
@@ -103,13 +102,33 @@ def model_baseline(self) -> None:
     
     if os.path.exists(manifest_file):
         print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
+        
+        # Load manifest to get correct file paths
+        with open(manifest_file, "r") as f:
+            manifest = json.load(f)
+        
+        # Load model using XGBoost's load_model
+        model = XGBClassifier()
+        model_file = manifest["outputs"]["model_file"]
+        model.load_model(model_file)
+        
+        # Load feature names and add them to the model
+        with open(manifest["outputs"]["feature_names_file"], "r") as f:
+            feature_data = json.load(f)
+            model.feature_names = feature_data["feature_names"]
+        
+        # Load metrics
+        with open(manifest["outputs"]["metrics_file"], "r") as f:
+            metrics = json.load(f)
+        
+        # Update pipeline state
+        self.models["baseline"] = model
+        self.metrics["baseline"] = metrics
+        self.artifacts[step] = manifest["outputs"]
         self.paths[step] = step_dir
         self.hashes[step] = param_hash
-        # Load model and metrics
-        # TODO: Implement model loading
-        self.models["baseline"] = joblib.load(os.path.join(step_dir, "model.pkl"))
-        self.metrics["baseline"] = json.load(open(os.path.join(step_dir, "metrics.json")))
-        return
+        print(f"[{step.upper()}] Loaded model and metrics from checkpoint")
+        return    
     
     os.makedirs(step_dir, exist_ok=True)
     
@@ -318,3 +337,152 @@ def model_baseline(self) -> None:
     self.paths[step] = step_dir
     self.hashes[step] = param_hash
     self.artifacts[step] = manifest["outputs"]
+
+
+if __name__ == "__main__":
+    # Example usage to test the model baseline functionality
+    from ml_pipeline.base import MLPipeline
+    import pandas as pd
+    import numpy as np
+    
+    # Create mock datasets for testing
+    np.random.seed(42)
+    n_samples = 1000
+    
+    # Create features that have some predictive power
+    feature1 = np.random.normal(0, 1, n_samples)
+    feature2 = np.random.normal(0, 1, n_samples)
+    feature3 = np.random.normal(0, 1, n_samples)
+    
+    # Create a target variable with some relationship to the features
+    target_prob = 1 / (1 + np.exp(-(0.5*feature1 - 0.7*feature2 + 0.3*feature3)))
+    target = np.random.binomial(1, target_prob)
+    
+    # Create a dataset with these features
+    mock_data = pd.DataFrame({
+        "id": range(1, n_samples + 1),
+        "feature1": feature1,
+        "feature2": feature2,
+        "feature3": feature3,
+        "feature4": np.random.normal(0, 1, n_samples),  # noise feature
+        "feature5": np.random.normal(0, 1, n_samples),  # noise feature
+        "target": target
+    })
+    
+    # Split into train, val, test, excluded
+    train_size = int(0.6 * n_samples)
+    val_size = int(0.2 * n_samples)
+    test_size = int(0.15 * n_samples)
+    excluded_size = n_samples - train_size - val_size - test_size
+    
+    train_data = mock_data.iloc[:train_size].copy()
+    val_data = mock_data.iloc[train_size:train_size+val_size].copy()
+    test_data = mock_data.iloc[train_size+val_size:train_size+val_size+test_size].copy()
+    excluded_data = mock_data.iloc[train_size+val_size+test_size:].copy()
+    
+    # Create a test configuration
+    test_config = {
+        "target_col": "target",
+        "id_col": "id",
+        "use_mlflow": False,
+        "n_estimators": 100,
+        "max_depth": 3,
+        "learning_rate": 0.1,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "random_state": 42
+    }
+    
+    # Initialize the pipeline with test configuration
+    pipeline = MLPipeline(config=test_config)
+    
+    # Add mock data to the pipeline state (as if it came from scaling)
+    pipeline.dataframes = {
+        "train_sca": train_data,
+        "val_sca": val_data,
+        "test_sca": test_data,
+        "excluded_sca": excluded_data,
+        "feature_engineered": mock_data  # Also add the original data for reference
+    }
+    
+    # Add previous step paths for proper linking
+    pipeline.paths = {
+        "numeric_conversion": "artifacts/numeric_conversion_abcdef",
+        "scaling": "artifacts/scaling_123456"
+    }
+    
+    # Add transformations dictionary that might be needed
+    pipeline.transformations = {
+        "numeric_conversion": {
+            "feature_columns": mock_data.columns.tolist()
+        }
+    }
+    
+    # Run the model baseline step
+    pipeline.model_baseline()
+    
+    # Display results summary
+    print("\nModel Baseline Results Summary:")
+    print("-" * 40)
+    
+    # Show model metrics
+    print("Model Performance Metrics:")
+    for dataset, metrics in pipeline.metrics["baseline"].items():
+        if dataset != "excluded" or metrics["accuracy"] is not None:
+            print(f"\n{dataset.upper()} SET METRICS:")
+            for metric, value in metrics.items():
+                if value is not None:
+                    print(f"  {metric}: {value:.4f}")
+    
+    # Show feature importances
+    model = pipeline.models["baseline"]
+    importances = model.feature_importances_
+    feature_names = model.feature_names
+    
+    print("\nFeature Importances:")
+    for feature, importance in sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True):
+        print(f"  {feature}: {importance:.4f}")
+    
+    # Show output directory
+    print(f"\nOutput directory: {pipeline.paths['model_baseline']}")
+    print(f"Artifacts created: {list(pipeline.artifacts.get('model_baseline', {}).keys())}")
+    
+    # Optional: Plot ROC curve
+    try:
+        import matplotlib.pyplot as plt
+        from sklearn.metrics import roc_curve, auc
+        
+        # Get test predictions
+        X_test = test_data.drop(test_config["target_col"], axis=1)
+        y_test = test_data[test_config["target_col"]]
+        
+        # Ensure we're using the same feature columns as the model
+        X_test = X_test[model.feature_names]
+        
+        # Get prediction probabilities
+        y_prob = model.predict_proba(X_test)[:, 1]
+        
+        # Calculate ROC curve
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        roc_auc = auc(fpr, tpr)
+        
+        # Plot
+        plt.figure(figsize=(8, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.legend(loc="lower right")
+        
+        # Save the plot
+        roc_plot_path = os.path.join(pipeline.paths["model_baseline"], "roc_curve.png")
+        plt.savefig(roc_plot_path)
+        print(f"\nROC curve saved to: {roc_plot_path}")
+        
+        # Show the plot
+        plt.show()
+    except ImportError:
+        print("\nMatplotlib not available - skipping ROC curve plot")

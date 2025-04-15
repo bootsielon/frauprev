@@ -14,8 +14,7 @@ from datetime import datetime
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import mlflow
-from .utils import make_param_hash
-from .utils import log_registry
+from ml_pipeline.utils import make_param_hash, log_registry
 
 
 def identify_stratification_columns(df, target, use_stratification, cardinality_threshold):
@@ -442,3 +441,74 @@ def partitioning(self) -> None:
 
     self.paths[step] = step_dir
     self.hashes[step] = param_hash
+
+
+if __name__ == "__main__":
+    # Example usage to test the partitioning functionality
+    from ml_pipeline.base import MLPipeline
+    import pandas as pd
+    import numpy as np
+    
+    # Create a mock dataset for testing
+    np.random.seed(42)
+    n_samples = 1000
+    
+    # Create fewer categories to avoid single-member stratification groups
+    categories = ['A', 'B']  # Reduced number of categories
+    client_ids = np.random.randint(1, 20, n_samples)  # Reduced range
+    merchant_ids = np.random.randint(101, 120, n_samples)  # Reduced range
+    
+    mock_data = pd.DataFrame({
+        "transaction_id": range(1, n_samples + 1),  # ID column
+        "client_id": client_ids,
+        "merchant_id": merchant_ids,
+        "amount": np.random.uniform(10, 1000, n_samples),
+        "is_fraud": np.random.choice([0, 1], n_samples, p=[0.8, 0.2]),  # 20% fraud rate for better testing
+        "transaction_hour": np.random.randint(0, 6, n_samples),  # Reduced hour range
+        "transaction_dayofweek": np.random.randint(0, 3, n_samples),  # Reduced day range
+        "category": np.random.choice(categories, n_samples),
+        "client_account_age_days": np.random.randint(1, 100, n_samples),
+        "merchant_account_age_days": np.random.randint(1, 100, n_samples)
+    })
+    
+    # Create a test configuration with a lower stratification threshold
+    test_config = {
+        "target_col": "is_fraud",
+        "id_col": "transaction_id",
+        "use_mlflow": False,
+        "seed": 42,
+        "use_stratification": True,
+        "use_downsampling": True,
+        "stratify_cardinality_threshold": 5,  # Lower threshold to limit stratification columns
+        "train_size": 0.7,
+        "val_size": 0.15,
+        "test_size": 0.15
+    }
+    
+    # Initialize the pipeline with test configuration
+    pipeline = MLPipeline(config=test_config)
+    
+    # Add the mock data to the pipeline state
+    pipeline.dataframes["feature_engineered"] = mock_data
+    
+    # Run the partitioning step
+    pipeline.partitioning()
+    
+    # Display results summary
+    print("\nPartitioning Results Summary:")
+    print("-" * 40)
+    
+    # Check class balance in each partition
+    for split in ["train", "val", "test"]:
+        df_split = pipeline.dataframes[split]
+        fraud_count = df_split[test_config["target_col"]].sum()
+        total_count = len(df_split)
+        fraud_rate = fraud_count / total_count * 100
+        print(f"{split.capitalize()} set: {total_count} samples, {fraud_count} frauds ({fraud_rate:.2f}%)")
+    
+    # Show excluded samples
+    excluded_count = len(pipeline.dataframes["excluded"])
+    print(f"Excluded samples: {excluded_count}")
+    
+    # Show output directory
+    print(f"\nOutput directory: {pipeline.paths['partitioning']}")

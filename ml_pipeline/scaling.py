@@ -4,8 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import mlflow
-from .utils import make_param_hash
-from .utils import log_registry
+from ml_pipeline.utils import make_param_hash, log_registry
 
 
 def standardize_dataframe(
@@ -192,3 +191,117 @@ def scaling(self) -> None:
     }
     self.paths[step] = step_dir
     self.hashes[step] = param_hash
+
+
+if __name__ == "__main__":
+    # Example usage to test the scaling functionality
+    from ml_pipeline.base import MLPipeline
+    import pandas as pd
+    import numpy as np
+    
+    # Create mock datasets for testing
+    np.random.seed(42)
+    n_samples = 200
+    
+    # Create sample numeric data (assuming this comes after numeric_conversion)
+    mock_train = pd.DataFrame({
+        "id": range(1, n_samples + 1),
+        "feature1": np.random.normal(100, 15, n_samples),
+        "feature2": np.random.normal(0, 1, n_samples),
+        "feature3": np.random.exponential(5, n_samples),
+        "feature4": np.random.uniform(-10, 10, n_samples),
+        "feature5": np.random.normal(50, 10, n_samples),
+        "target": np.random.choice([0, 1], n_samples, p=[0.8, 0.2])
+    })
+    
+    # Create validation and test sets with similar structure but different values
+    mock_val = mock_train.copy().sample(n=50, random_state=42)
+    mock_val.reset_index(drop=True, inplace=True)
+    # Add some outliers to val set to test scaling robustness
+    mock_val.loc[0, "feature1"] = 200  # Outlier
+    mock_val.loc[1, "feature3"] = 30   # Outlier
+    
+    mock_test = mock_train.copy().sample(n=50, random_state=43)
+    mock_test.reset_index(drop=True, inplace=True)
+    # Add some outliers to test set
+    mock_test.loc[0, "feature2"] = 5   # Outlier
+    mock_test.loc[1, "feature4"] = -15 # Outlier
+    
+    # Create a small excluded set
+    mock_excluded = mock_train.copy().sample(n=20, random_state=44)
+    mock_excluded.reset_index(drop=True, inplace=True)
+    
+    # Create a test configuration
+    test_config = {
+        "target_col": "target",
+        "id_col": "id",
+        "use_mlflow": False,
+        "t1": True,    # Use mean for centering
+        "s1": True     # Use std for scaling
+    }
+    
+    # Alternative configuration for median/IQR scaling
+    # test_config = {
+    #     "target_col": "target",
+    #     "id_col": "id",
+    #     "use_mlflow": False,
+    #     "t1": False,  # Use median for centering
+    #     "s1": False   # Use IQR for scaling
+    # }
+    
+    # Initialize the pipeline with test configuration
+    pipeline = MLPipeline(config=test_config)
+    
+    # Add mock data to the pipeline state (as if it came from numeric_conversion)
+    pipeline.dataframes = {
+        "train_num": mock_train,
+        "val_num": mock_val,
+        "test_num": mock_test,
+        "excluded_num": mock_excluded
+    }
+    
+    # Run the scaling step
+    pipeline.scaling()
+    
+    # Display results summary
+    print("\nScaling Results Summary:")
+    print("-" * 40)
+    
+    # Show original vs scaled stats for training data
+    original_stats = mock_train.describe().loc[["mean", "std"]]
+    scaled_stats = pipeline.dataframes["train_sca"].describe().loc[["mean", "std"]]
+    
+    print("Original Training Data Stats:")
+    print(original_stats)
+    print("\nScaled Training Data Stats:")
+    print(scaled_stats)
+    
+    # Verify that target column wasn't scaled
+    target_scaled = pipeline.dataframes["train_sca"][test_config["target_col"]]
+    target_orig = mock_train[test_config["target_col"]]
+    target_unchanged = (target_scaled == target_orig).all()
+    print(f"\nTarget column preserved unchanged: {target_unchanged}")
+    
+    # Verify that ID column wasn't scaled
+    id_scaled = pipeline.dataframes["train_sca"][test_config["id_col"]]
+    id_orig = mock_train[test_config["id_col"]]
+    id_unchanged = (id_scaled == id_orig).all()
+    print(f"ID column preserved unchanged: {id_unchanged}")
+    
+    # Check for extreme values after scaling (z-scores > 3)
+    features = [col for col in pipeline.dataframes["train_sca"].columns 
+               if col not in [test_config["target_col"], test_config["id_col"]]]
+    
+    extreme_counts = {}
+    for split in ["train_sca", "val_sca", "test_sca"]:
+        df = pipeline.dataframes[split]
+        extreme_values = (df[features].abs() > 3).sum().sum()
+        extreme_counts[split] = extreme_values
+    
+    print("\nExtreme values (|z| > 3) in each dataset:")
+    for split, count in extreme_counts.items():
+        print(f"{split}: {count} values")
+    
+    # Show output directory
+    print(f"\nOutput directory: {pipeline.paths['scaling']}")
+    print(f"Artifacts created: {list(pipeline.artifacts.get('scaling', {}).keys())}")

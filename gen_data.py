@@ -6,7 +6,7 @@ from faker import Faker
 from datetime import datetime, timedelta
 
 # Initialize Faker
-fake = Faker()
+# fake = Faker()
 
 # --- 1. DATABASE SETUP ---
 
@@ -51,7 +51,8 @@ def create_tables(cursor):
 
 # --- 2. DATA GENERATORS ---
 
-def generate_clients(n=100):
+def generate_clients(fake, cd=100, random_seed=42):
+    random.seed(random_seed)
     return [
         (
             fake.uuid4(),
@@ -62,10 +63,11 @@ def generate_clients(n=100):
             fake.uuid4(),
             random.choice([0, 1])
         )
-        for _ in range(n)
+        for _ in range(cd)
     ]
 
-def generate_merchants(n=50):
+def generate_merchants(fake, m=50, seed=42):
+    random.seed(seed)
     return [
         (
             fake.uuid4(),
@@ -75,10 +77,10 @@ def generate_merchants(n=50):
             fake.date_between(start_date='-10y', end_date='-1d').isoformat(),
             fake.country()
         )
-        for _ in range(n)
+        for _ in range(m)
     ]
 
-def generate_transactions(clients, merchants, n=10000):
+def generate_transactions(fake, clients, merchants, n=10000):
     return [
         (
             fake.uuid4(),
@@ -97,7 +99,12 @@ def generate_transactions(clients, merchants, n=10000):
 
 # --- 3. MAIN EXECUTION ---
 
-def main():
+def gen_data(n=1000, random_seed=42):
+
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    fake = Faker()
+    Faker.seed(random_seed) # Seed Faker for reproducibility
     # Connect to SQLite (use ':memory:' for RAM or 'fraud_poc.db' to persist)
     conn = sqlite3.connect('fraud_poc.db')
     cursor = conn.cursor()
@@ -106,21 +113,24 @@ def main():
     create_tables(cursor)
 
     # Generate and insert synthetic data
-    client_data = generate_clients()
-    merchant_data = generate_merchants()
-    transaction_data = generate_transactions(client_data, merchant_data)
+    client_data = generate_clients(fake, cd=50, random_seed=random_seed)
+    # Generate merchants and transactions
+    merchant_data = generate_merchants(fake, m=50, seed=random_seed)
+    transaction_data = generate_transactions(fake, client_data, merchant_data, n=10000)
 
     cursor.executemany('INSERT INTO clients VALUES (?, ?, ?, ?, ?, ?, ?)', client_data)
     cursor.executemany('INSERT INTO merchants VALUES (?, ?, ?, ?, ?, ?)', merchant_data)
     cursor.executemany('INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', transaction_data)
     conn.commit()
 
-    # Optional: show sample
+    # Optional: shown sample
     sample_df = pd.read_sql_query("SELECT * FROM transactions LIMIT 5", conn)
     print(sample_df)
 
     conn.close()
 
 if __name__ == "__main__":
-    main()
+    gen_data(n=10000, random_seed=4024)
+    # Uncomment the line below to generate data with a different seed
+    # gen_data(n=1000, random_seed=24)
 

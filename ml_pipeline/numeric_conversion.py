@@ -4,8 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 import mlflow
-from .utils import make_param_hash
-from .utils import log_registry
+from ml_pipeline.utils import make_param_hash, log_registry
 
 
 def numeric_conversion(self) -> None:
@@ -442,3 +441,102 @@ def numeric_conversion(self) -> None:
     with open(feature_names_file, "w") as f:
         json.dump({"feature_names": train_encoded.columns.tolist()}, f, indent=2)
     manifest["outputs"]["feature_names_json"] = feature_names_file
+
+
+if __name__ == "__main__":
+    # Example usage to test the numeric conversion functionality
+    from ml_pipeline.base import MLPipeline
+    import pandas as pd
+    import numpy as np
+    
+    # Create mock datasets for testing
+    np.random.seed(42)
+    n_samples = 200
+    
+    # Create sample data with various column types
+    mock_train = pd.DataFrame({
+        "id": range(1, n_samples + 1),
+        "numeric_col": np.random.normal(0, 1, n_samples),
+        "integer_col": np.random.randint(0, 100, n_samples),
+        "low_card_cat": np.random.choice(['A', 'B', 'C'], n_samples),
+        "mid_card_cat": np.random.choice([f'Cat_{i}' for i in range(20)], n_samples),
+        "high_card_cat": np.random.choice([f'ID_{i}' for i in range(150)], n_samples),
+        "id_like_col": [f'U{i:05d}' for i in range(n_samples)],
+        "missing_values_col": np.random.choice([np.nan, 1, 2, 3], n_samples),
+        "target": np.random.choice([0, 1], n_samples, p=[0.8, 0.2])
+    })
+    
+    # Add some empty strings to test that case
+    mock_train.loc[np.random.choice(n_samples, 10), "low_card_cat"] = ""
+    
+    # Create validation and test sets with similar structure but different values
+    mock_val = mock_train.copy().sample(n=50, random_state=42)
+    mock_val.reset_index(drop=True, inplace=True)
+    mock_val["numeric_col"] = mock_val["numeric_col"] + np.random.normal(0, 0.1, len(mock_val))
+    
+    mock_test = mock_train.copy().sample(n=50, random_state=43)
+    mock_test.reset_index(drop=True, inplace=True)
+    mock_test["numeric_col"] = mock_test["numeric_col"] + np.random.normal(0, 0.1, len(mock_test))
+    
+    # Add some values in validation/test that weren't in training
+    mock_val.loc[0, "mid_card_cat"] = "New_Category_Val"
+    mock_test.loc[0, "mid_card_cat"] = "New_Category_Test"
+    
+    # Create a simple configuration for testing
+    test_config = {
+        "target_col": "target",
+        "id_col": "id",
+        "use_mlflow": False,
+        "c1": 5,          # Cardinality threshold for one-hot encoding
+        "c2": 0.2,        # Fraction threshold for rare category reduction
+        "b1": True,       # Treat high-cardinality vars as mid if True
+        "c3": 1.5,        # Log-scale threshold for ID-like columns
+        "id_like_exempt": True,  # Whether to drop ID-like columns
+        "central_tendency": "median"  # Use median for imputation
+    }
+    
+    # Initialize the pipeline with test configuration
+    pipeline = MLPipeline(config=test_config)
+    
+    # Add mock data to the pipeline state
+    pipeline.dataframes = {
+        "train": mock_train,
+        "val": mock_val,
+        "test": mock_test,
+        "excluded": mock_train.sample(n=20, random_state=44)  # Create a small excluded set
+    }
+    
+    # Run the numeric conversion step
+    pipeline.numeric_conversion()
+    
+    # Display results summary
+    print("\nNumeric Conversion Results Summary:")
+    print("-" * 40)
+    
+    # Show shape changes
+    print(f"Original train shape: {mock_train.shape}")
+    print(f"Numeric train shape: {pipeline.dataframes['train_num'].shape}")
+    
+    # Show column type counts
+    non_numeric_cols = mock_train.select_dtypes(exclude=['number']).columns
+    print(f"\nOriginal non-numeric columns: {len(non_numeric_cols)}")
+    print(f"Original non-numeric columns: {list(non_numeric_cols)}")
+    
+    # Show one-hot encoded columns
+    numeric_cols = pipeline.dataframes['train_num'].columns
+    print(f"\nFinal numeric columns: {len(numeric_cols)}")
+    
+    # Check for any missing values
+    missing_counts = pipeline.dataframes['train_num'].isna().sum().sum()
+    print(f"Missing values after imputation: {missing_counts}")
+    
+    # Show output directory and artifacts
+    print(f"\nOutput directory: {pipeline.paths['numeric_conversion']}")
+    print(f"Artifacts created: {list(pipeline.artifacts.get('numeric_conversion', {}).keys())}")
+    
+    # Verify consistency across datasets
+    col_match = (set(pipeline.dataframes['train_num'].columns) == 
+                 set(pipeline.dataframes['val_num'].columns) == 
+                 set(pipeline.dataframes['test_num'].columns) == 
+                 set(pipeline.dataframes['excluded_num'].columns))
+    print(f"\nColumn consistency across all datasets: {col_match}")

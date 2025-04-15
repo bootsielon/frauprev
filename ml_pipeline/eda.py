@@ -5,8 +5,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import mlflow
-from .utils import make_param_hash
-from .utils import log_registry
+from ml_pipeline.utils import make_param_hash, log_registry
+
 
 
 def eda(self) -> None:
@@ -82,3 +82,26 @@ def eda(self) -> None:
     log_registry(step=step_key, param_hash=param_hash, config=config, output_dir=step_dir)
     self.paths[step_key] = step_dir
     self.hashes[step_key] = param_hash
+
+
+if __name__ == "__main__":
+    # Example usage to test the EDA functionality
+    from ml_pipeline.base import MLPipeline
+    
+    # Create a simple configuration for testing
+    test_config = {
+        # "data_path": "path/to/your/test/data.csv",
+        "target_col": "is_fraud",
+        "use_mlflow": False
+    }
+    
+    # Initialize the pipeline with test configuration
+    pipeline = MLPipeline(config=test_config)
+    
+    # Run the EDA step
+    pipeline.eda()
+    
+    print("EDA completed successfully!")
+    print(f"Output directory: {pipeline.paths['eda']}")
+
+

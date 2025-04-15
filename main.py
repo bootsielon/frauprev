@@ -1,6 +1,7 @@
 from ml_pipeline.base import MLPipeline
 from ml_pipeline.utils import make_param_hash
-
+from cleanup import cleanup_artifacts
+from gen_data import gen_data
 
 def main() -> None:
     configs = [
@@ -62,4 +63,27 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # List of artifact directories to clean
+    artifact_dirs = [
+        "mlruns",
+        "artifacts",
+        "artifacts/eda",
+        "artifacts/step1",
+        "artifacts/step2",
+        "artifacts/step3",
+        "artifacts/step4",
+        "artifacts/step5",
+        "artifacts/step6",
+        "artifacts/step7",
+        "artifacts/step8",
+        "artifacts/step9",
+        "artifacts/step10",
+        "artifacts/step11",
+        "artifacts/step12",    
+    ]
+    # Path to the generated database
+    db_path = "fraud_poc.db"
+    cleanup_artifacts(artifact_dirs, db_path)
+    # Generate new data
+    gen_data(n=10000, random_seed=402)
     main()

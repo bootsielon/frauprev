@@ -47,8 +47,21 @@ class MLPipeline:
             "artifacts/step10",
             "artifacts/step11",
             "artifacts/step12"
-        ]
-        
+            ]
+        # Bind the imported functions to this instance
+        self.eda = lambda: eda(self)
+        self.feature_engineering = lambda: feature_engineering(self)
+        self.partitioning = lambda: partitioning(self)
+        self.numeric_conversion = lambda: numeric_conversion(self)
+        self.scaling = lambda: scaling(self)
+        self.model_baseline = lambda: model_baseline(self)
+        self.shap_explainability = lambda: shap_explainability(self)
+        self.shap_selection = lambda: shap_selection(self)
+        self.feature_correlation = lambda: feature_correlation(self)
+        self.feature_select_cluster = lambda: feature_select_cluster(self)
+        self.feature_select_threshold = lambda: feature_select_threshold(self)
+        self.hyperparameter_tuning = lambda: hyperparameter_tuning(self)
+        self.final_model = lambda: final_model(self)
 
     def load_data(self, db_path: str = "fraud_poc.db") -> pd.DataFrame:
         """
@@ -70,24 +83,24 @@ class MLPipeline:
         """
         Execute all pipeline steps in sequence, storing full internal state.
         """
-        eda(self)
-        feature_engineering(self)
-        partitioning(self)
-        numeric_conversion(self)
-        scaling(self)
-        model_baseline(self)
-        
+        self.eda()
+        self.feature_engineering()
+        self.partitioning()
+        self.numeric_conversion()
+        self.scaling()
+        self.model_baseline()
+
     
     def run_later(self)-> None:
-        shap_explainability(self)
-        shap_selection(self)
-        feature_correlation(self)
+        self.shap_explainability()
+        self.shap_selection()
+        self.feature_correlation()
         if self.config["use_cluster_select"][0]:
-            feature_select_cluster(self)
+            self.feature_select_cluster()
         else:
-            feature_select_threshold(self)
-        hyperparameter_tuning(self)
-        final_model(self)
+            self.feature_select_threshold()
+        self.hyperparameter_tuning()
+        self.final_model()
         
         # Save the final state of the pipeline
         # self.save_state()
