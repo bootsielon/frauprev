@@ -6,6 +6,7 @@ import pandas as pd
 import sqlite3
 import os
 from datetime import datetime, timezone
+import matplotlib.pyplot as plt
 
 
 def load_data(db_path: str = "fraud_poc.db") -> pd.DataFrame:
@@ -64,8 +65,15 @@ def log_to_global_registry(entry: dict, registry_path: str = "artifacts/global_r
     
     with open(registry_path, "a") as f:
         f.write(json.dumps(entry) + "\n")
-    
 
+
+def save_plot_as_artifact(fig, artifact_path, artifacts_dict, artifact_key):
+    """
+    Save a matplotlib figure as an artifact and register its path.
+    """
+    fig.savefig(artifact_path)
+    plt.close(fig)
+    artifacts_dict[artifact_key] = artifact_path
 
 
 if __name__ == "__main__":

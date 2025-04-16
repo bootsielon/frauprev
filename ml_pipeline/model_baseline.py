@@ -3,15 +3,15 @@ import json
 import joblib
 # import pandas as pd
 import numpy as np
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from datetime import datetime, timezone
 from xgboost import XGBClassifier
 from sklearn.metrics import (
     roc_auc_score, precision_score, recall_score, f1_score,
-    confusion_matrix, accuracy_score
+    confusion_matrix, accuracy_score, roc_curve, auc
 )
 import mlflow
-from ml_pipeline.utils import make_param_hash, log_registry
+from ml_pipeline.utils import make_param_hash, log_registry, save_plot_as_artifact
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
@@ -338,6 +338,43 @@ def model_baseline(self) -> None:
     self.hashes[step] = param_hash
     self.artifacts[step] = manifest["outputs"]
 
+    # Feature Importance Plot
+    importances = model.feature_importances_
+    feature_names = model.feature_names
+    indices = np.argsort(importances)[::-1]
+
+    fig_fi, ax_fi = plt.subplots(figsize=(10, 6))
+    ax_fi.bar(range(len(importances)), importances[indices], align="center")
+    ax_fi.set_xticks(range(len(importances)))
+    ax_fi.set_xticklabels(np.array(feature_names)[indices], rotation=45, ha="right")
+    ax_fi.set_title("Feature Importances")
+    ax_fi.set_ylabel("Importance")
+    fig_fi.tight_layout()
+    fi_plot_path = os.path.join(step_dir, "feature_importance.png")
+    save_plot_as_artifact(fig_fi, fi_plot_path, self.artifacts[step], "feature_importance_png")
+
+    # After model is trained and predictions are made:
+    if "test_sca" in self.dataframes:
+        X_test = self.dataframes["test_sca"].drop(self.config["target_col"], axis=1)
+        y_test = self.dataframes["test_sca"][self.config["target_col"]]
+        X_test = X_test[model.feature_names]
+        y_prob = model.predict_proba(X_test)[:, 1]
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        roc_auc = auc(fpr, tpr)
+
+        plt.figure(figsize=(8, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.legend(loc="lower right")
+        base_roc_img_name = f"baseline_roc_curve_{param_hash}"
+        roc_plot_path = os.path.join(step_dir, f"{base_roc_img_name}.png")
+        save_plot_as_artifact(plt.gcf(), roc_plot_path, self.artifacts[step], base_roc_img_name)  # plt.savefig(roc_plot_path)
+        plt.close()  # plt.savefig(roc_plot_path) # plt.close() # self.artifacts[step]["roc_curve_png"] = roc_plot_path
 
 if __name__ == "__main__":
     # Example usage to test the model baseline functionality
@@ -443,14 +480,15 @@ if __name__ == "__main__":
     for feature, importance in sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True):
         print(f"  {feature}: {importance:.4f}")
     
+
     # Show output directory
     print(f"\nOutput directory: {pipeline.paths['model_baseline']}")
     print(f"Artifacts created: {list(pipeline.artifacts.get('model_baseline', {}).keys())}")
     
     # Optional: Plot ROC curve
     try:
-        import matplotlib.pyplot as plt
-        from sklearn.metrics import roc_curve, auc
+        # import matplotlib.pyplot as plt
+        # from sklearn.metrics import roc_curve, auc
         
         # Get test predictions
         X_test = test_data.drop(test_config["target_col"], axis=1)
