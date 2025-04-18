@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 import mlflow
-from ml_pipeline.utils import make_param_hash, log_registry
+from ml_pipeline.utils import make_param_hash, log_registry, convert_numpy_types
 
 
 def numeric_conversion(self) -> None:
@@ -17,130 +17,172 @@ def numeric_conversion(self) -> None:
         self.paths["numeric_conversion"]
         self.hashes["numeric_conversion"]
     """
+    train_mode = self.config["train_mode"]
+
     step = "numeric_conversion"
-    train_df = self.dataframes["train"]
-    val_df = self.dataframes["val"]
     test_df = self.dataframes["test"]
-    excluded_df = self.dataframes.get("excluded", None)
-    # excluded_numeric = excluded_df.copy() if excluded_df is not None else None
-    dataset_size = len(train_df)  # + (len(excluded_numeric) if excluded_numeric is not None else 0)
+    if train_mode:
+        train_df = self.dataframes["train"]
+        val_df = self.dataframes["val"]        
+        excluded_df = self.dataframes.get("excluded", None)
+        dataset_size = len(train_df)  # + (len(excluded_numeric) if excluded_numeric is not None else 0)
+    else:
+        dataset_size = len(test_df)  # Adjust dataset size for test mode
 
     config = {
-        "c1": self.config["c1"],  # cardinality threshold for one-hot
-        "c2": self.config["c2"],  # fraction threshold for rare category reduction
-        "b1": self.config["b1"],  # treat high-cardinality vars as mid if True
-        "c3": self.config["c3"],  # log-scale threshold for ID-like
+        "c1": self.config.get("c1"),  # cardinality threshold for one-hot
+        "c2": self.config.get("c2"),  # fraction threshold for rare category reduction
+        "b1": self.config.get("b1"),  # treat high-cardinality vars as mid if True
+        "c3": self.config.get("c3"),  # log-scale threshold for ID-like
         "id_like_exempt": self.config.get("id_like_exempt", True)
     }
 
-    param_hash = make_param_hash(config)
-    step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
+    # param_hash = make_param_hash(config)  # if train_mode else self.config["inf_hash"]
+    # if not train_mode: 
+        # inf_hash = self.config["inf_hash"]
+    # Generate a unique hash for the parameters used in this step
+    # step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
+
+    if train_mode:
+        # Training mode: generate hash from config
+        param_hash = make_param_hash(config)
+        step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
+    else:
+        # Inference mode: 
+        # 1. Use train_hash to load training artifacts
+        train_hash = self.config["train_hash"]
+        train_step_dir = os.path.join("artifacts", f"{step}_{train_hash}")
+        
+        # 2. Generate new hash for storing inference results (optional)
+        inference_config = {
+            "inference_time": datetime.now().isoformat(),
+            "source_model_hash": train_hash,
+            "test_data_shape": test_df.shape
+        }
+        inference_hash = make_param_hash(inference_config)
+        inference_step_dir = os.path.join("artifacts", f"inference_{step}_{inference_hash}")
+        
+        # 3. Use training dir for loading artifacts
+        step_dir = train_step_dir
+        param_hash = train_hash
+
     manifest_file = os.path.join(step_dir, "manifest.json")
 
     if os.path.exists(manifest_file):
         print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
         self.paths[step] = step_dir
         self.hashes[step] = param_hash
-        self.dataframes["train_num"] = pd.read_csv(os.path.join(step_dir, f"train_num_{param_hash}.csv"))
-        self.dataframes["val_num"] = pd.read_csv(os.path.join(step_dir, f"val_num_{param_hash}.csv"))
         self.dataframes["test_num"] = pd.read_csv(os.path.join(step_dir, f"test_num_{param_hash}.csv"))
-        #if excluded_df is not None:
-        self.dataframes["excluded_num"] = pd.read_csv(os.path.join(step_dir, f"excluded_num_{param_hash}.csv")) if excluded_df is not None else None
+        if train_mode:
+            self.dataframes["train_num"] = pd.read_csv(os.path.join(step_dir, f"train_num_{param_hash}.csv"))
+            self.dataframes["val_num"] = pd.read_csv(os.path.join(step_dir, f"val_num_{param_hash}.csv"))
+            #if excluded_df is not None:
+            self.dataframes["excluded_num"] = pd.read_csv(os.path.join(step_dir, f"excluded_num_{param_hash}.csv")) if excluded_df is not None else None
         return
 
     os.makedirs(step_dir, exist_ok=True)
-    train_numeric = train_df.copy()
-    dropped = []
-    encoded_mapping = {}
-    inverse_mapping = {}
-    grouping_map = {}
-    id_like_columns = []
 
-    # First, identify and drop constant columns (no variance or all null)
-    constant_columns = []
-    for col in train_numeric.columns:
-        # Check for completely null columns
-        if train_numeric[col].isna().all():
-            constant_columns.append(col)
-            grouping_map[col] = {"strategy": "drop_constant", "reason": "all_null"}
-            continue
-            
-        # Check for numeric columns with zero variance
-        if pd.api.types.is_numeric_dtype(train_numeric[col]):
-            if train_numeric[col].nunique() <= 1:
+    if train_mode:
+        train_numeric = train_df.copy()
+        dropped = []
+        encoded_mapping = {}
+        inverse_mapping = {}
+        grouping_map = {}
+        id_like_columns = []
+
+        # First, identify and drop constant columns (no variance or all null)
+        constant_columns = []
+        for col in train_numeric.columns:
+            # Check for completely null columns
+            if train_numeric[col].isna().all():
                 constant_columns.append(col)
-                grouping_map[col] = {"strategy": "drop_constant", "reason": "zero_variance_numeric"}
+                grouping_map[col] = {
+                    "strategy": "drop_constant",
+                    "reason": "all_null"
+                }
                 continue
-        
-        # Check for categorical columns with only one value
-        else:
-            if train_numeric[col].nunique() <= 1:
-                constant_columns.append(col)
-                grouping_map[col] = {"strategy": "drop_constant", "reason": "single_value_categorical"}
-                continue
-
-    # Drop constant columns
-    if constant_columns:
-        train_numeric.drop(columns=constant_columns, inplace=True)
-        dropped.extend(constant_columns)
-        print(f"[{step.upper()}] Dropped {len(constant_columns)} constant columns: {constant_columns}")
-
-    for col in train_df.columns:
-        if col in constant_columns:
-            continue
+                
+            # Check for numeric columns with zero variance
+            if pd.api.types.is_numeric_dtype(train_numeric[col]):
+                if train_numeric[col].nunique() <= 1:
+                    constant_columns.append(col)
+                    grouping_map[col] = {
+                        "strategy": "drop_constant",
+                        "reason": "zero_variance_numeric"
+                    }
+                    continue
             
-        if pd.api.types.is_numeric_dtype(train_df[col]):
-            continue
+            # Check for categorical columns with only one value
+            else:
+                if train_numeric[col].nunique() <= 1:
+                    constant_columns.append(col)
+                    grouping_map[col] = {"strategy": "drop_constant", "reason": "single_value_categorical"}
+                    continue
 
-        cardinality = train_df[col].nunique(dropna=False)
-        col_fraction = cardinality / dataset_size
+        # Drop constant columns
+        if constant_columns:
+            train_numeric.drop(columns=constant_columns, inplace=True)
+            dropped.extend(constant_columns)
+            print(f"[{step.upper()}] Dropped {len(constant_columns)} constant columns: {constant_columns}")
 
-        if cardinality <= config["c1"]:
-            # Low cardinality: keep and one-hot later
-            continue
+        for col in train_df.columns:
+            if col in constant_columns:
+                continue
+                
+            if pd.api.types.is_numeric_dtype(train_df[col]):
+                continue
 
-        elif col_fraction <= config["c2"]:
-            # Mid cardinality: keep top C1 categories, rest → "Other"
-            top_cats = train_df[col].value_counts().nlargest(config["c1"]).index
-            train_numeric[col] = train_df[col].where(train_df[col].isin(top_cats), other="Other")
-            grouping_map[col] = {
-                "strategy": "top_c1+other",
-                "top_categories": top_cats.tolist()
-            }
+            cardinality = train_df[col].nunique(dropna=False)
+            col_fraction = cardinality / dataset_size
 
-        elif config["b1"]:
-            # High cardinality but treating as mid
-            top_cats = train_df[col].value_counts().nlargest(config["c1"]).index
-            train_numeric[col] = train_df[col].where(train_df[col].isin(top_cats), other="Other")
-            grouping_map[col] = {
-                "strategy": "high_as_mid",
-                "top_categories": top_cats.tolist()
-            }
+            if cardinality <= config["c1"]:
+                # Low cardinality: keep and one-hot later
+                continue
 
-        elif config["id_like_exempt"]:
-            log_ratio = np.log10(dataset_size) / np.log10(max(cardinality, 2))
-            if 1 <= log_ratio <= config["c3"]:
-                id_like_columns.append(col)
+            elif col_fraction <= config["c2"]:
+                # Mid cardinality: keep top C1 categories, rest → "Other"
+                top_cats = train_df[col].value_counts().nlargest(config["c1"]).index
+                train_numeric[col] = train_df[col].where(train_df[col].isin(top_cats), other="Other")
+                grouping_map[col] = {
+                    "strategy": "top_c1+other",
+                    "top_categories": top_cats.tolist()
+                }
+
+            elif config["b1"]:
+                # High cardinality but treating as mid
+                top_cats = train_df[col].value_counts().nlargest(config["c1"]).index
+                train_numeric[col] = train_df[col].where(train_df[col].isin(top_cats), other="Other")
+                grouping_map[col] = {
+                    "strategy": "high_as_mid",
+                    "top_categories": top_cats.tolist()
+                }
+
+            elif config["id_like_exempt"]:
+                log_ratio = np.log10(dataset_size) / np.log10(max(cardinality, 2))
+                if 1 <= log_ratio <= config["c3"]:
+                    id_like_columns.append(col)
+                    dropped.append(col)
+                    train_numeric.drop(columns=[col], inplace=True)
+                    grouping_map[col] = {"strategy": "id_like_exempt"}
+                    continue
+
+                # otherwise drop
+                dropped.append(col)
+                grouping_map[col] = {"strategy": "drop"}
+
+            else:
                 dropped.append(col)
                 train_numeric.drop(columns=[col], inplace=True)
-                grouping_map[col] = {"strategy": "id_like_exempt"}
-                continue
+                grouping_map[col] = {"strategy": "drop"}
 
-            # otherwise drop
-            dropped.append(col)
-            grouping_map[col] = {"strategy": "drop"}
+        # Process val and test similar to train
+        val_numeric = val_df.copy()
+        excluded_numeric = excluded_df.copy() if excluded_df is not None else None
+        # Apply same transformations to val and excluded
+        
 
-        else:
-            dropped.append(col)
-            train_numeric.drop(columns=[col], inplace=True)
-            grouping_map[col] = {"strategy": "drop"}
-
-    # Process val and test similar to train
-    val_numeric = val_df.copy()
     test_numeric = test_df.copy()
-    excluded_numeric = excluded_df.copy() if excluded_df is not None else None
-
-    # Apply same transformations to val and test
+    # Apply same transformations to val, test, and excluded
     for col in train_df.columns:
         if col in dropped:
             if col in val_numeric.columns:
@@ -162,8 +204,8 @@ def numeric_conversion(self) -> None:
     
     # Make sure val_numeric and test_numeric have the same columns as train_numeric
     # Keep only columns that are in train_numeric
-    val_numeric = val_numeric[[col for col in val_numeric.columns if col in train_numeric.columns]]
     test_numeric = test_numeric[[col for col in test_numeric.columns if col in train_numeric.columns]]
+    val_numeric = val_numeric[[col for col in val_numeric.columns if col in train_numeric.columns]]
     excluded_numeric = excluded_numeric[[col for col in excluded_numeric.columns if col in train_numeric.columns]] if excluded_numeric is not None else None
 
     # Handle missing values
@@ -217,8 +259,8 @@ def numeric_conversion(self) -> None:
         
         # Impute missing values across all datasets
         for dataset_name, dataset in datasets.items():
-            if col in dataset.columns:
-                dataset[col].fillna(central_value, inplace=True)
+            if col in dataset.columns:  # Replace these lines around line 263:
+                dataset.loc[:, col] = dataset[col].fillna(central_value)  # dataset[col].fillna(central_value, inplace=True) 
     
     # For categorical columns, add indicator and impute with mode
     categorical_cols = train_numeric.select_dtypes(include=["object", "category"]).columns
@@ -237,9 +279,9 @@ def numeric_conversion(self) -> None:
         # Impute missing values across all datasets
         for dataset_name, dataset in datasets.items():
             if col in dataset.columns:
-                dataset[col].fillna(col_mode, inplace=True)
-                dataset[col].replace("", col_mode, inplace=True)
-    
+                dataset.loc[:, col] = dataset[col].fillna(col_mode)
+                dataset.loc[:, col] = dataset[col].replace("", col_mode)
+
     # One-hot encode categorical columns for all datasets
     categorical_cols = train_numeric.select_dtypes(include=["object", "category"]).columns.tolist()
     encoded_datasets = {}
@@ -296,6 +338,7 @@ def numeric_conversion(self) -> None:
     mapping_json = os.path.join(step_dir, f"encoded_mapping_{param_hash}.json")
 
     with open(grouping_json, "w") as f:
+        grouping_map = convert_numpy_types(grouping_map)  # Convert NumPy types to native Python types
         json.dump(grouping_map, f, indent=2)
     with open(mapping_json, "w") as f:
         json.dump({
@@ -360,11 +403,13 @@ def numeric_conversion(self) -> None:
     log_registry(step, param_hash, config, step_dir)
 
     # Store all artifacts and metadata in class state
-    self.dataframes["train_num"] = train_encoded
-    self.dataframes["val_num"] = val_encoded
     self.dataframes["test_num"] = test_encoded
-    if "excluded" in encoded_datasets:
-        self.dataframes["excluded_num"] = excluded_encoded
+    if train_mode:
+        self.dataframes["train_num"] = train_encoded
+        self.dataframes["val_num"] = val_encoded
+
+        if "excluded" in encoded_datasets:
+            self.dataframes["excluded_num"] = excluded_encoded
     
     # This section is redundant - the excluded dataset is saved again
     # if "excluded" in encoded_datasets:

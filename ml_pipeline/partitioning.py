@@ -331,6 +331,42 @@ def partitioning(self) -> None:
         self.hashes: Updates with the hash for the partitioning step
     """
     step = "partitioning"
+
+def partitioning(self) -> None:
+    step = "partitioning"
+
+    # Inference mode: just store the test data and return
+    if not self.train_mode:  # or if not self.train
+        df = self.dataframes["feature_engineered"]
+        config = {
+            "columns": sorted(df.columns),
+            "dtypes": {col: str(df[col].dtype) for col in df.columns}
+        }
+        param_hash = make_param_hash(config)
+        step_dir = os.path.join("artifacts", f"test_{param_hash}")
+        os.makedirs(step_dir, exist_ok=True)
+        test_file = os.path.join(step_dir, f"test_{param_hash}.csv")
+        df.to_csv(test_file, index=False)
+        manifest = {
+            "step": step,
+            "param_hash": param_hash,
+            "timestamp": datetime.utcnow().isoformat(),
+            "config": config,
+            "output_dir": step_dir,
+            "outputs": {
+                "test_csv": test_file
+            }
+        }
+        with open(os.path.join(step_dir, "manifest.json"), "w") as f:
+            json.dump(manifest, f, indent=2)
+        self.dataframes["test"] = df
+        self.paths[step] = step_dir
+        self.hashes[step] = param_hash
+        print(f"[{step.upper()}] Inference mode: test data saved to {test_file}")
+        return
+
+    # ...rest of your training/partitioning logic...
+
     df = self.dataframes["feature_engineered"]
     target = self.config["target_col"]
     id_col = self.config["id_col"]

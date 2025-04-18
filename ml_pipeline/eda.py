@@ -8,7 +8,6 @@ import mlflow
 from ml_pipeline.utils import make_param_hash, log_registry
 
 
-
 def eda(self) -> None:
     """
     Step 0: Perform EDA. Saves summary statistics, column metadata, and class distribution plot.
@@ -18,10 +17,13 @@ def eda(self) -> None:
     self.dataframes["raw"] = df
 
     config = {
-        "target_col": self.config["target_col"],
+        "target_col": self.config.get("target_col"),
         "columns": sorted(df.columns),
         "dtypes": {col: str(df[col].dtype) for col in df.columns}
     }
+
+    target_col = self.config.get("target_col")
+
     param_hash = make_param_hash(config)
     step_key = "eda"
     step_dir = os.path.join("artifacts", f"{step_key}_{param_hash}")
@@ -38,6 +40,14 @@ def eda(self) -> None:
     metadata_file = os.path.join(step_dir, f"column_metadata_{param_hash}.json")
     class_plot_file = os.path.join(step_dir, f"class_distribution_{param_hash}.png")
 
+    if target_col and target_col in df.columns:
+        sns.countplot(x=target_col, data=df)
+        plt.title("Class Distribution")
+        plt.savefig(class_plot_file)
+        plt.close()
+    else:
+        print(f"Warning: target_col '{target_col}' not found in data. Skipping class distribution plot.")
+
     df.describe(include="all").to_csv(summary_file)
 
     metadata = {
@@ -53,10 +63,13 @@ def eda(self) -> None:
     with open(metadata_file, "w") as f:
         json.dump(metadata, f, indent=2)
 
-    sns.countplot(x=self.config["target_col"], data=df)
-    plt.title("Class Distribution")
-    plt.savefig(class_plot_file)
-    plt.close()
+    if target_col and target_col in df.columns:
+        sns.countplot(x=self.config["target_col"], data=df)
+        plt.title("Class Distribution")
+        plt.savefig(class_plot_file)
+        plt.close()
+    else:
+        print(f"Warning: target_col '{target_col}' not found in data. Skipping class distribution plot.")
 
     manifest = {
         "step": "eda",
@@ -76,13 +89,15 @@ def eda(self) -> None:
     if self.config.get("use_mlflow", False):
         with mlflow.start_run(run_name=f"{step_key}_{param_hash}"):
             mlflow.set_tags({"step": step_key, "param_hash": param_hash})
-            mlflow.log_params({"target_col": self.config["target_col"]})
+            mlflow.log_params({"target_col": self.config["target_col"] if target_col else None})
             mlflow.log_artifacts(step_dir, artifact_path=step_key)
 
     log_registry(step=step_key, param_hash=param_hash, config=config, output_dir=step_dir)
     self.paths[step_key] = step_dir
     self.hashes[step_key] = param_hash
 
+    print("EDA completed successfully!")
+    print(f"Output directory: {self.paths[step_key]}")
 
 if __name__ == "__main__":
     # Example usage to test the EDA functionality

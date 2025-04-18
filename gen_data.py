@@ -100,7 +100,9 @@ def generate_transactions(fake, clients, merchants, n=10000):
 # --- 3. MAIN EXECUTION ---
 
 def gen_data(n=1000, random_seed=42):
-
+    """
+    Generate synthetic data and store it in a SQLite database.
+    """
     random.seed(random_seed)
     np.random.seed(random_seed)
     fake = Faker()
@@ -108,26 +110,42 @@ def gen_data(n=1000, random_seed=42):
     # Connect to SQLite (use ':memory:' for RAM or 'fraud_poc.db' to persist)
     conn = sqlite3.connect('fraud_poc.db')
     cursor = conn.cursor()
-
     # Create tables
     create_tables(cursor)
-
     # Generate and insert synthetic data
     client_data = generate_clients(fake, cd=50, random_seed=random_seed)
     # Generate merchants and transactions
     merchant_data = generate_merchants(fake, m=50, seed=random_seed)
     transaction_data = generate_transactions(fake, client_data, merchant_data, n=10000)
-
     cursor.executemany('INSERT INTO clients VALUES (?, ?, ?, ?, ?, ?, ?)', client_data)
     cursor.executemany('INSERT INTO merchants VALUES (?, ?, ?, ?, ?, ?)', merchant_data)
     cursor.executemany('INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', transaction_data)
     conn.commit()
-
     # Optional: shown sample
     sample_df = pd.read_sql_query("SELECT * FROM transactions LIMIT 5", conn)
     print(sample_df)
-
     conn.close()
+
+
+def generate_dataframes(n_clients=50, n_merchants=50, n_transactions=10000, random_seed=42):
+    fake = Faker()
+    Faker.seed(random_seed)
+    clients = generate_clients(fake, cd=n_clients, random_seed=random_seed)
+    merchants = generate_merchants(fake, m=n_merchants, seed=random_seed)
+    transactions = generate_transactions(fake, clients, merchants, n=n_transactions)
+
+    df_clients = pd.DataFrame(clients, columns=[
+        "client_id", "account_creation_date", "avg_spend", "country", "ip_address", "device_id", "has_biometrics"
+    ])
+    df_merchants = pd.DataFrame(merchants, columns=[
+        "merchant_id", "name", "category", "risk_score", "account_creation_date", "country"
+    ])
+    df_transactions = pd.DataFrame(transactions, columns=[
+        "transaction_id", "timestamp", "amount", "currency", "location", "ip_address", "device_id",
+        "client_id", "merchant_id", "is_fraud"
+    ])
+    return df_clients, df_merchants, df_transactions
+
 
 if __name__ == "__main__":
     gen_data(n=10000, random_seed=4024)
