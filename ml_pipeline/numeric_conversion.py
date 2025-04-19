@@ -103,8 +103,8 @@ def numeric_conversion(self) -> None:  # noqa: C901
     dropped: List[str]               = []
     grouping_map: Dict               = {}
     id_like_columns: List[str]       = []
-    encoded_mapping: Dict[str, Dict] = {}
-    inverse_mapping: Dict[str, Dict] = {}
+    # encoded_mapping: Dict[str, Dict] = {}
+    # inverse_mapping: Dict[str, Dict] = {}
 
     # --------‑‑‑ Identify & drop constant columns ---------------------
     constant_cols: List[str] = [

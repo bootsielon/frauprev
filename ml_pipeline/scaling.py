@@ -1,307 +1,256 @@
-import os
+# === ml_pipeline/scaling.py ===========================================
+"""
+Step 4 – Scale numeric features (z‑score or median/IQR).
+
+Spec compliance:
+• Artefacts live in   artifacts/run_<global_hash>/scaling/
+  (no hashes in filenames).
+• Training computes centring / scaling stats; inference loads them and
+  applies to new data (never recomputes from test).
+• No self.hashes usage (legacy lines commented).
+"""
+
+from __future__ import annotations
+
 import json
-import pandas as pd
-import numpy as np
-from datetime import datetime
+import os
+from datetime import datetime, timezone
+from typing import Dict, List
+
 import mlflow
-from ml_pipeline.utils import make_param_hash, log_registry
+import numpy as np
+import pandas as pd
+
+from ml_pipeline.utils import log_registry  # absolute import – spec §11
 
 
+# ──────────────────────────────────────────────────────────────────────
+# HELPERS
+# ──────────────────────────────────────────────────────────────────────
 def standardize_dataframe(
     df: pd.DataFrame,
-    numeric_cols: list[str],
+    numeric_cols: List[str],
     center_stats: pd.Series,
-    scale_stats: pd.Series
+    scale_stats: pd.Series,
 ) -> pd.DataFrame:
     """
-    Apply centering and scaling to a dataframe using provided stats.
-    Only scales the specified numeric columns, leaving others untouched.
+    Return a copy of *df* where numeric_cols have been standardised.
 
-    Args:
-        df: Input DataFrame to scale.
-        numeric_cols: List of numeric column names to be scaled.
-        center_stats: Series of center values (mean or median).
-        scale_stats: Series of scale values (std or IQR).
-
-    Returns:
-        Scaled DataFrame with specified numeric columns standardized.
+    Only columns that both (a) appear in numeric_cols and (b) are present in
+    the provided dataframe are transformed.
     """
     df_scaled = df.copy()
-    # Only apply scaling to specified numeric columns that exist in the dataframe
-    valid_numeric_cols = [col for col in numeric_cols if col in df.columns]
-    
-    if valid_numeric_cols:
-        df_scaled[valid_numeric_cols] = (df[valid_numeric_cols] - center_stats[valid_numeric_cols]) / scale_stats[valid_numeric_cols]
+    in_cols = [c for c in numeric_cols if c in df.columns]
+    if in_cols:
+        df_scaled[in_cols] = (df[in_cols] - center_stats[in_cols]) / scale_stats[in_cols]
     return df_scaled
 
 
-def scaling(self) -> None:
+# ──────────────────────────────────────────────────────────────────────
+# MAIN PIPELINE STEP
+# ──────────────────────────────────────────────────────────────────────
+def scaling(self) -> None:  # noqa: C901
     """
-    Step 4: Apply centering and scaling to numeric features using train-only stats.
-    Centering: mean or median (T1)
-    Scaling: standard deviation or IQR (S1)
-    The target column is preserved without any scaling.
+    Scale numeric features produced by *numeric_conversion*.
 
-    Updates:
-        self.dataframes["train_sca"], ["val_sca"], ["test_sca"]
-        self.paths["scaling"], self.hashes["scaling"]
+    • Training mode – compute stats on train set, save stats + scaled CSVs.  
+    • Inference mode – load stats from training run, apply to test set
+      (and any other provided splits) without recomputing.
     """
     step = "scaling"
-    
-    # Use consistent naming from numeric_conversion step
-    train_df = self.dataframes["train_num"]
-    val_df = self.dataframes["val_num"]
-    test_df = self.dataframes["test_num"]
-    excluded_df = self.dataframes.get("excluded_num", None)
-
-    # Print available keys for debugging
-    print(f"[{step.upper()}] Available dataframe keys: {list(self.dataframes.keys())}")
-    
-    target_col = self.config["target_col"]
-    id_col = self.config["id_col"]
-    
-    # Store target and ID values separately before scaling
-    train_target = train_df[target_col] if target_col in train_df.columns else None
-    val_target = val_df[target_col] if target_col in val_df.columns else None
-    test_target = test_df[target_col] if target_col in test_df.columns else None
-    excluded_target = excluded_df[target_col] if excluded_df is not None and target_col in excluded_df.columns else None
-    
-    train_id = train_df[id_col] if id_col in train_df.columns else None
-    val_id = val_df[id_col] if id_col in val_df.columns else None
-    test_id = test_df[id_col] if id_col in test_df.columns else None
-    excluded_id = excluded_df[id_col] if excluded_df is not None and id_col in excluded_df.columns else None
-    
-    # Exclude target and ID columns from scaling
-    exclude_cols = [col for col in [target_col, id_col] if col in train_df.columns]  # + [col for col in [target_col, id_col] if col in excluded_df.columns] if excluded_df is not None else []
-
-    config = {
-        "s1": self.config["s1"],  # True → std, False → IQR
-        "t1": self.config["t1"]   # True → mean, False → median
-    }
-    param_hash = make_param_hash(config)
-    step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
-    manifest_file = os.path.join(step_dir, "manifest.json")
-
-    if os.path.exists(manifest_file):
-        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
-        self.paths[step] = step_dir
-        self.hashes[step] = param_hash
-        for split in ["train_sca", "val_sca", "test_sca", "excluded_sca"]:
-            if split in self.dataframes:
-                continue
-            split_file = split.replace("_sca", "")  # Get base name for file
-            self.dataframes[split] = pd.read_csv(os.path.join(step_dir, f"{split_file}_scaled_{param_hash}.csv"))
-        return
+    run_dir  = self.run_dir
+    step_dir = os.path.join(run_dir, step)
+    train_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
 
     os.makedirs(step_dir, exist_ok=True)
+    manifest_fp = os.path.join(step_dir, "manifest.json")
 
-    # By this point, all columns should be numeric, no need for selection
-    # But we'll keep the check for safety and log a warning if non-numeric columns exist
-    non_numeric_cols = train_df.select_dtypes(exclude=[np.number]).columns.tolist()
-    if non_numeric_cols:
-        print(f"[WARNING] Found non-numeric columns after numeric conversion: {non_numeric_cols}")
-        print("These columns will be excluded from scaling.")
-    
-    numeric_cols = [col for col in train_df.select_dtypes(include=[np.number]).columns.tolist() 
-                   if col not in exclude_cols]
+    # ── 0. quick exit when artefacts already present for this run ─────
+    if os.path.exists(manifest_fp):
+        manifest = json.load(open(manifest_fp))
+        for key, rel in manifest["outputs"].items():
+            if rel is None or not key.endswith("_csv"):
+                continue
+            full = os.path.join(step_dir, rel) if not os.path.isabs(rel) else rel
+            df_key = key.replace("_csv", "")
+            self.dataframes[df_key] = pd.read_csv(full)
+        self.paths[step]     = step_dir
+        self.artifacts[step] = manifest["outputs"]
+        print(f"[{step.upper()}] Skipping — artefacts already present at {step_dir}")
+        return
 
-    # Compute translation and scale stats from train only
-    center_func = np.mean if config["t1"] else np.median
-    scale_func = np.std if config["s1"] else lambda x: np.subtract(*np.percentile(x, [75, 25]))
+    # shorthand
+    cfg = self.config
+    target_col, id_col = cfg["target_col"], cfg["id_col"]
 
-    center_stats = train_df[numeric_cols].agg(center_func)
-    scale_stats = train_df[numeric_cols].agg(scale_func)
-    scale_stats.replace(0, 1.0, inplace=True)  # avoid division by zero
+    # ──────────────────────────────
+    # 1. DATA PREP
+    # ──────────────────────────────
+    datasets: Dict[str, pd.DataFrame] = {}
+    for split in ["train_num", "val_num", "test_num", "excluded_num"]:
+        if split in self.dataframes:
+            datasets[split.replace("_num", "")] = self.dataframes[split]
 
-    df_train_scaled = standardize_dataframe(train_df, numeric_cols, center_stats, scale_stats)
-    df_val_scaled = standardize_dataframe(val_df, numeric_cols, center_stats, scale_stats)
-    df_test_scaled = standardize_dataframe(test_df, numeric_cols, center_stats, scale_stats)
-    df_excluded_scaled = standardize_dataframe(excluded_df, numeric_cols, center_stats, scale_stats) if excluded_df is not None else None
-    # Add back the target and ID columns
-    if train_target is not None:
-        df_train_scaled[target_col] = train_target
-    if val_target is not None:
-        df_val_scaled[target_col] = val_target
-    if test_target is not None:
-        df_test_scaled[target_col] = test_target
-    if excluded_target is not None and df_excluded_scaled is not None:
-        df_excluded_scaled[target_col] = excluded_target
-        
-    if train_id is not None:
-        df_train_scaled[id_col] = train_id
-    if val_id is not None:
-        df_val_scaled[id_col] = val_id
-    if test_id is not None:
-        df_test_scaled[id_col] = test_id
-    if excluded_id is not None and df_excluded_scaled is not None:
-        df_excluded_scaled[id_col] = excluded_id
+    # we always need test set
+    test_df = datasets["test"]
 
-    # Save to CSVs with consistent naming
-    df_train_scaled.to_csv(os.path.join(step_dir, f"train_scaled_{param_hash}.csv"), index=False)
-    df_val_scaled.to_csv(os.path.join(step_dir, f"val_scaled_{param_hash}.csv"), index=False)
-    df_test_scaled.to_csv(os.path.join(step_dir, f"test_scaled_{param_hash}.csv"), index=False)
-    # if df_excluded_scaled is not None:
-    df_excluded_scaled.to_csv(os.path.join(step_dir, f"excluded_scaled_{param_hash}.csv"), index=False) if df_excluded_scaled is not None else None
+    # ──────────────────────────────
+    # 2‑A. TRAINING MODE
+    # ──────────────────────────────
+    if self.train_mode:
+        train_df = datasets["train"]
+        # columns to scale
+        numeric_cols = [
+            c
+            for c in train_df.select_dtypes(include="number").columns
+            if c not in {target_col, id_col}
+        ]
 
-    # Save transformation stats
-    stats_file = os.path.join(step_dir, f"scaling_stats_{param_hash}.json")
-    stats = {
-        "center_function": "mean" if config["t1"] else "median",
-        "scale_function": "std" if config["s1"] else "iqr",
-        "center": center_stats.to_dict(),
-        "scale": scale_stats.to_dict()
+        # stats
+        # center_func = np.mean if cfg["t1"] else np.median
+        # scale_func = np.std if cfg["s1"] else lambda x: np.subtract(*np.percentile(x, [75, 25]))
+
+        # center_stats = train_df[numeric_cols].agg(center_func)
+        # scale_stats = train_df[numeric_cols].agg(scale_func).replace(0, 1.0)
+        # --- PATCH inside scaling() ------------------------------------------
+        # Compute translation and scale stats from TRAIN ONLY  ────────────
+        if cfg["t1"]:  # mean
+            center_stats = train_df[numeric_cols].mean()
+        else:          # median
+            center_stats = train_df[numeric_cols].median()
+
+        if cfg["s1"]:  # standard deviation
+            scale_stats = train_df[numeric_cols].std(ddof=0)
+        else:          # IQR
+            scale_stats = train_df[numeric_cols].apply(
+                lambda x: np.subtract(*np.percentile(x, [75, 25]))
+            )
+
+        scale_stats.replace(0, 1.0, inplace=True)  # avoid division by zero
+        # ---------------------------------------------------------------------
+        # scale every split present
+        scaled: Dict[str, pd.DataFrame] = {}
+        for name, df in datasets.items():
+            scaled_df = standardize_dataframe(df, numeric_cols, center_stats, scale_stats)
+            # put back untouched id/target (ensures exact originals)
+            for col in [target_col, id_col]:
+                if col in df.columns:
+                    scaled_df[col] = df[col]
+            scaled[name] = scaled_df
+
+        # save csvs
+        for name, df in scaled.items():
+            df.to_csv(os.path.join(step_dir, f"{name}_sca.csv"), index=False)
+
+        # save stats
+        stats = {
+            "center_function": "mean" if cfg["t1"] else "median",
+            "scale_function": "std" if cfg["s1"] else "iqr",
+            "center": center_stats.to_dict(),
+            "scale": scale_stats.to_dict(),
+            "numeric_cols": numeric_cols,
+        }
+        json.dump(stats, open(os.path.join(step_dir, "scaling_stats.json"), "w"), indent=2)
+
+    # ──────────────────────────────
+    # 2‑B. INFERENCE MODE
+    # ──────────────────────────────
+    else:
+        stats_fp = os.path.join(train_dir, "scaling_stats.json")
+        if not os.path.exists(stats_fp):
+            raise FileNotFoundError(f"[{step}] scaling_stats.json missing in training run")
+
+        stats = json.load(open(stats_fp))
+        numeric_cols = stats["numeric_cols"]
+        center_stats = pd.Series(stats["center"])
+        scale_stats = pd.Series(stats["scale"]).replace(0, 1.0)
+
+        # apply to *current* test data (and any other provided split)
+        scaled = {}
+        for name, df in datasets.items():
+            scaled_df = standardize_dataframe(df, numeric_cols, center_stats, scale_stats)
+            for col in [target_col, id_col]:
+                if col in df.columns:
+                    scaled_df[col] = df[col]
+            scaled[name] = scaled_df
+            scaled_df.to_csv(os.path.join(step_dir, f"{name}_sca.csv"), index=False)
+
+        # copy stats file locally for completeness
+        import shutil
+
+        shutil.copy(stats_fp, os.path.join(step_dir, "scaling_stats.json"))
+
+    # ──────────────────────────────
+    # 3. MANIFEST & REGISTRY
+    # ──────────────────────────────
+    outputs = {
+        f"{name}_sca_csv": f"{name}_sca.csv"
+        for name in scaled.keys()
     }
-    with open(stats_file, "w") as f:
-        json.dump(stats, f, indent=2)
+    outputs["scaling_stats_json"] = "scaling_stats.json"
 
     manifest = {
         "step": step,
-        "param_hash": param_hash,
-        "timestamp": datetime.utcnow().isoformat(),
-        "config": config,
+        "global_hash": self.global_hash,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "config": cfg,
         "output_dir": step_dir,
-        "outputs": {
-            "train_scaled_csv": f"train_scaled_{param_hash}.csv",
-            "val_scaled_csv": f"val_scaled_{param_hash}.csv",
-            "test_scaled_csv": f"test_scaled_{param_hash}.csv",
-            "excluded_scaled_csv": f"excluded_scaled_{param_hash}.csv",
-            "scaling_stats_json": f"scaling_stats_{param_hash}.json"
-        }
+        "outputs": outputs,
     }
-    with open(manifest_file, "w") as f:
-        json.dump(manifest, f, indent=2)
+    json.dump(manifest, open(manifest_fp, "w"), indent=2)
 
-    if self.config.get("use_mlflow", False):
-        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
-            mlflow.set_tags({"step": step, "param_hash": param_hash})
+    # MLflow
+    if cfg.get("use_mlflow", False):
+        with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
+            mlflow.set_tags({"step": step, "global_hash": self.global_hash})
             mlflow.log_artifacts(step_dir, artifact_path=step)
 
-    log_registry(step, param_hash, config, step_dir)
+    # registry + state
+    log_registry(step, self.global_hash, cfg, step_dir)
 
-    self.dataframes["train_sca"] = df_train_scaled
-    self.dataframes["val_sca"] = df_val_scaled
-    self.dataframes["test_sca"] = df_test_scaled
-    self.dataframes["excluded_sca"] = df_excluded_scaled  if df_excluded_scaled is not None else None
-    self.artifacts[step] = {
-        "train_scaled_csv": os.path.join(step_dir, f"train_scaled_{param_hash}.csv"),
-        "val_scaled_csv": os.path.join(step_dir, f"val_scaled_{param_hash}.csv"),
-        "test_scaled_csv": os.path.join(step_dir, f"test_scaled_{param_hash}.csv"),
-        "excluded_scaled_csv": os.path.join(step_dir, f"excluded_scaled_{param_hash}.csv"),
-        "scaling_stats_json": os.path.join(step_dir, f"scaling_stats_{param_hash}.json")
-    }
-    self.paths[step] = step_dir
-    self.hashes[step] = param_hash
+    for name, df in scaled.items():
+        self.dataframes[f"{name}_sca"] = df
+
+    self.paths[step]     = step_dir
+    self.artifacts[step] = outputs
+    # removed: self.hashes no longer used
+
+    print(f"[{step.upper()}] Scaling completed — artefacts at {step_dir}")
 
 
+# ──────────────────────────────────────────────────────────────────────
+# SMOKE‑TEST
+# ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Example usage to test the scaling functionality
+    """
+    Synthetic smoke‑test that runs scaling directly after numeric_conversion.
+    """
     from ml_pipeline.base import MLPipeline
-    import pandas as pd
     import numpy as np
-    
-    # Create mock datasets for testing
-    np.random.seed(42)
-    n_samples = 200
-    
-    # Create sample numeric data (assuming this comes after numeric_conversion)
-    mock_train = pd.DataFrame({
-        "id": range(1, n_samples + 1),
-        "feature1": np.random.normal(100, 15, n_samples),
-        "feature2": np.random.normal(0, 1, n_samples),
-        "feature3": np.random.exponential(5, n_samples),
-        "feature4": np.random.uniform(-10, 10, n_samples),
-        "feature5": np.random.normal(50, 10, n_samples),
-        "target": np.random.choice([0, 1], n_samples, p=[0.8, 0.2])
-    })
-    
-    # Create validation and test sets with similar structure but different values
-    mock_val = mock_train.copy().sample(n=50, random_state=42)
-    mock_val.reset_index(drop=True, inplace=True)
-    # Add some outliers to val set to test scaling robustness
-    mock_val.loc[0, "feature1"] = 200  # Outlier
-    mock_val.loc[1, "feature3"] = 30   # Outlier
-    
-    mock_test = mock_train.copy().sample(n=50, random_state=43)
-    mock_test.reset_index(drop=True, inplace=True)
-    # Add some outliers to test set
-    mock_test.loc[0, "feature2"] = 5   # Outlier
-    mock_test.loc[1, "feature4"] = -15 # Outlier
-    
-    # Create a small excluded set
-    mock_excluded = mock_train.copy().sample(n=20, random_state=44)
-    mock_excluded.reset_index(drop=True, inplace=True)
-    
-    # Create a test configuration
-    test_config = {
+
+    # --- create mock numeric‑dataframes (already numeric) -------------
+    np.random.seed(0)
+    n = 300
+    df = pd.DataFrame(
+        {
+            "id": range(n),
+            "f1": np.random.normal(10, 2, n),
+            "f2": np.random.exponential(1, n),
+            "target": np.random.choice([0, 1], n),
+        }
+    )
+    cfg = {
         "target_col": "target",
         "id_col": "id",
+        "t1": True,
+        "s1": True,
         "use_mlflow": False,
-        "t1": True,    # Use mean for centering
-        "s1": True     # Use std for scaling
+        "seed": 42,
     }
-    
-    # Alternative configuration for median/IQR scaling
-    # test_config = {
-    #     "target_col": "target",
-    #     "id_col": "id",
-    #     "use_mlflow": False,
-    #     "t1": False,  # Use median for centering
-    #     "s1": False   # Use IQR for scaling
-    # }
-    
-    # Initialize the pipeline with test configuration
-    pipeline = MLPipeline(config=test_config)
-    
-    # Add mock data to the pipeline state (as if it came from numeric_conversion)
-    pipeline.dataframes = {
-        "train_num": mock_train,
-        "val_num": mock_val,
-        "test_num": mock_test,
-        "excluded_num": mock_excluded
-    }
-    
-    # Run the scaling step
-    pipeline.scaling()
-    
-    # Display results summary
-    print("\nScaling Results Summary:")
-    print("-" * 40)
-    
-    # Show original vs scaled stats for training data
-    original_stats = mock_train.describe().loc[["mean", "std"]]
-    scaled_stats = pipeline.dataframes["train_sca"].describe().loc[["mean", "std"]]
-    
-    print("Original Training Data Stats:")
-    print(original_stats)
-    print("\nScaled Training Data Stats:")
-    print(scaled_stats)
-    
-    # Verify that target column wasn't scaled
-    target_scaled = pipeline.dataframes["train_sca"][test_config["target_col"]]
-    target_orig = mock_train[test_config["target_col"]]
-    target_unchanged = (target_scaled == target_orig).all()
-    print(f"\nTarget column preserved unchanged: {target_unchanged}")
-    
-    # Verify that ID column wasn't scaled
-    id_scaled = pipeline.dataframes["train_sca"][test_config["id_col"]]
-    id_orig = mock_train[test_config["id_col"]]
-    id_unchanged = (id_scaled == id_orig).all()
-    print(f"ID column preserved unchanged: {id_unchanged}")
-    
-    # Check for extreme values after scaling (z-scores > 3)
-    features = [col for col in pipeline.dataframes["train_sca"].columns 
-               if col not in [test_config["target_col"], test_config["id_col"]]]
-    
-    extreme_counts = {}
-    for split in ["train_sca", "val_sca", "test_sca"]:
-        df = pipeline.dataframes[split]
-        extreme_values = (df[features].abs() > 3).sum().sum()
-        extreme_counts[split] = extreme_values
-    
-    print("\nExtreme values (|z| > 3) in each dataset:")
-    for split, count in extreme_counts.items():
-        print(f"{split}: {count} values")
-    
-    # Show output directory
-    print(f"\nOutput directory: {pipeline.paths['scaling']}")
-    print(f"Artifacts created: {list(pipeline.artifacts.get('scaling', {}).keys())}")
+
+    pipe = MLPipeline(cfg, data_source="raw", raw_data=df)
+    pipe.dataframes = {"train_num": df, "val_num": df.sample(60), "test_num": df.sample(60)}
+    pipe.scaling()
+
+    print("Train mean after scaling (should be ≈0):\n", pipe.dataframes["train_sca"][["f1", "f2"]].mean())
+    print("Artefacts →", pipe.paths["scaling"])
