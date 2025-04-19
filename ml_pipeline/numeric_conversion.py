@@ -48,19 +48,25 @@ def numeric_conversion(self) -> None:  # noqa: C901
     os.makedirs(step_dir, exist_ok=True)
     manifest_fp = os.path.join(step_dir, "manifest.json")
 
+    # --- PATCH: replace the current fast‑exit block in numeric_conversion.py ----
     # ── 1. Fast‑exit if artefacts already exist for *this* run ─────────
     if os.path.exists(manifest_fp):
         with open(manifest_fp) as fh:
             manifest = json.load(fh)
-        for name, fp in manifest["outputs"].items():
-            if name.endswith("_csv"):
-                key = name.replace("_csv", "")
-                self.dataframes[key] = pd.read_csv(fp)
+
+        for name, rel in manifest["outputs"].items():
+            if rel is None or not name.endswith("_csv"):
+                continue
+            full_path = os.path.join(step_dir, rel) if not os.path.isabs(rel) else rel
+            key = name.replace("_csv", "")
+            self.dataframes[key] = pd.read_csv(full_path)
+
         self.paths[step]     = step_dir
         self.artifacts[step] = manifest["outputs"]
         print(f"[{step.upper()}] Skipping — artefacts already present at {step_dir}")
         return
-
+    
+    # ---------------------------------------------------------------------------
     # ── 2. Inference mode – just copy artefacts from training run ─────
     if not self.train_mode:
         train_manifest_fp = os.path.join(train_dir, "manifest.json")
