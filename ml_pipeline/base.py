@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 # util helpers ----------------------------------------------------------
-from ml_pipeline.utils import log_registry  # make_param_hash removed from here
+from ml_pipeline.utils import log_registry, make_param_hash
 
 # pipeline steps --------------------------------------------------------
 from ml_pipeline.eda                       import eda
@@ -27,18 +27,6 @@ from ml_pipeline.feature_select_cluster    import feature_select_cluster
 from ml_pipeline.feature_select_threshold  import feature_select_threshold
 from ml_pipeline.hyperparameter_tuning     import hyperparameter_tuning
 from ml_pipeline.final_model               import final_model
-
-
-# ──────────────────────────────────────────────────────────────────────
-# STABLE HASH HELPER (spec §1‑A)
-# ──────────────────────────────────────────────────────────────────────
-def stable_hash(obj: Any, length: int = 12) -> str:
-    """
-    Deterministic hash: SHA‑256 over canonical JSON (sorted keys),
-    truncated to `length` hex characters.
-    """
-    blob = json.dumps(obj, sort_keys=True, default=str).encode()
-    return hashlib.sha256(blob).hexdigest()[:length]
 
 
 class MLPipeline:
@@ -90,7 +78,7 @@ class MLPipeline:
             #     "config"     : self.config,
             #     "data_source": self.data_source,
             # })
-            self.global_hash = stable_hash(self.config)
+            self.global_hash = make_param_hash(self.config)
             self.global_train_hash = self.global_hash
         else:
             # Inference: build deterministic hash from key tuple
@@ -101,7 +89,7 @@ class MLPipeline:
                 tuple(sorted(self.config["feature_names"])),
                 self.config.get("inference_extra", {}),
             )
-            self.global_hash = stable_hash(key_tuple)
+            self.global_hash = make_param_hash(key_tuple)
             # training run hash is supplied in the config
             self.global_train_hash = self.config["train_hash"]
 
