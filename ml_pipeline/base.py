@@ -2,38 +2,51 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+import json
+import hashlib
+# removed: timestamp hashing is no longer allowed
+# from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 
 # util helpers ----------------------------------------------------------
-from .utils import make_param_hash, log_registry
+from ml_pipeline.utils import log_registry  # make_param_hash removed from here
 
 # pipeline steps --------------------------------------------------------
-from .eda                       import eda
-from .feature_engineering       import feature_engineering
-from .partitioning              import partitioning
-from .numeric_conversion        import numeric_conversion
-from .scaling                   import scaling
-from .model_baseline            import model_baseline
-from .shap_explainability       import shap_explainability
-from .shap_selection            import shap_selection
-from .feature_correlation       import feature_correlation
-from .feature_select_cluster    import feature_select_cluster
-from .feature_select_threshold  import feature_select_threshold
-from .hyperparameter_tuning     import hyperparameter_tuning
-from .final_model               import final_model
+from ml_pipeline.eda                       import eda
+from ml_pipeline.feature_engineering       import feature_engineering
+from ml_pipeline.partitioning              import partitioning
+from ml_pipeline.numeric_conversion        import numeric_conversion
+from ml_pipeline.scaling                   import scaling
+from ml_pipeline.model_baseline            import model_baseline
+from ml_pipeline.shap_explainability       import shap_explainability
+from ml_pipeline.shap_selection            import shap_selection
+from ml_pipeline.feature_correlation       import feature_correlation
+from ml_pipeline.feature_select_cluster    import feature_select_cluster
+from ml_pipeline.feature_select_threshold  import feature_select_threshold
+from ml_pipeline.hyperparameter_tuning     import hyperparameter_tuning
+from ml_pipeline.final_model               import final_model
+
+
+# ──────────────────────────────────────────────────────────────────────
+# STABLE HASH HELPER (spec §1‑A)
+# ──────────────────────────────────────────────────────────────────────
+def stable_hash(obj: Any, length: int = 12) -> str:
+    """
+    Deterministic hash: SHA‑256 over canonical JSON (sorted keys),
+    truncated to `length` hex characters.
+    """
+    blob = json.dumps(obj, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest()[:length]
 
 
 class MLPipeline:
     """
     Configuration‑driven ML pipeline orchestrator.
 
-    • A single `global_hash` (a/k/a run hash) is used across every step.
-    • Training mode creates all artifacts; inference mode creates only the
-      minimal additional artifacts it needs and re‑uses those from the
-      training run referenced by `train_hash`.
+    • A single `global_hash` (run hash) is used across every step.
+    • `global_train_hash` points to the training run when in inference mode.
     """
 
     # ──────────────────────────────────────────────────────────────────
@@ -71,23 +84,41 @@ class MLPipeline:
 
         # ------------------------------------------------ run hash -----
         if self.train_mode:
-            self.global_hash = make_param_hash(   # type: ignore[arg-type]
-                {
-                    "timestamp"  : datetime.now(timezone.utc).isoformat(),
-                    "config"     : self.config,
-                    "data_source": self.data_source,
-                }
-            )
+            # Old non‑deterministic hash removed
+            # self.global_hash = make_param_hash({
+            #     "timestamp"  : datetime.now(timezone.utc).isoformat(),
+            #     "config"     : self.config,
+            #     "data_source": self.data_source,
+            # })
+            self.global_hash = stable_hash(self.config)
+            self.global_train_hash = self.global_hash
         else:
-            # inference must be told which training run to re‑use
-            self.global_hash = self.config["train_hash"]
+            # Inference: build deterministic hash from key tuple
+            key_tuple = (
+                self.config["model_name"],
+                self.config["model_hash"],
+                self.config["dataset_name"],
+                tuple(sorted(self.config["feature_names"])),
+                self.config.get("inference_extra", {}),
+            )
+            self.global_hash = stable_hash(key_tuple)
+            # training run hash is supplied in the config
+            self.global_train_hash = self.config["train_hash"]
 
         # expose for downstream components
-        self.config["global_hash"] = self.global_hash
+        self.config["global_hash"]       = self.global_hash
+        self.config["global_train_hash"] = self.global_train_hash
 
         # directory for every artifact of this run
         self.run_dir = os.path.join("artifacts", f"run_{self.global_hash}")
+        first_time = not os.path.exists(self.run_dir)
         os.makedirs(self.run_dir, exist_ok=True)
+
+        # optional human‑readable timestamp, not part of hashing
+        if first_time:
+            with open(os.path.join(self.run_dir, "created_at.txt"), "w") as fh:
+                import datetime as _dt
+                fh.write(_dt.datetime.utcnow().isoformat())
 
         # ------------------------------------------------ bind steps ---
         self.eda                       = lambda: eda(self)
@@ -187,3 +218,34 @@ class MLPipeline:
         """
         self.paths[step] = step_dir
         log_registry(step, self.global_hash, cfg or {}, step_dir)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SMOKE‑TEST (spec §8)
+# ──────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    """Minimal smoke‑test: build a pipeline in train & inference modes."""
+    dummy_config = {
+        "train_mode"   : True,
+        "random_seed"  : 42,
+        "model_name"   : "dummy",
+        "model_hash"   : "abcd1234",
+        "dataset_name" : "fake_ds",
+        "feature_names": ["f1", "f2"],
+    }
+
+    pipe = MLPipeline(dummy_config, data_source="raw", raw_data=pd.DataFrame())
+    print("Train run hash :", pipe.global_hash)
+
+    # Simulate inference mode reusing the same training run
+    infer_cfg = {
+        "train_mode"       : False,
+        "train_hash"       : pipe.global_hash,
+        "model_name"       : "dummy",
+        "model_hash"       : "abcd1234",
+        "dataset_name"     : "fake_ds",
+        "feature_names"    : ["f2", "f1"],  # order should not matter
+        "inference_extra"  : {},
+    }
+    infer_pipe = MLPipeline(infer_cfg, data_source="raw", raw_data=pd.DataFrame())
+    print("Inference run hash :", infer_pipe.global_hash)
