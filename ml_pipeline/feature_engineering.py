@@ -1,242 +1,279 @@
+# === ml_pipeline/feature_engineering.py ===============================
+"""
+Step 1 – Feature Engineering
+
+• Adds derived timestamp features, computes account age deltas.
+• Drops zero-variance or constant features (training only).
+• Outputs stored in: artifacts/run_<hash>/feature_engineering/
+"""
+
+from __future__ import annotations
+
 import os
 import json
 from datetime import datetime
 import pandas as pd
-# import numpy as np
 import mlflow
+
 from ml_pipeline.utils import make_param_hash, log_registry, convert_numpy_types
 
 
-def feature_engineering(self) -> None:
+def feature_engineering(self) -> None:  # type: ignore[override]
     """
-    Step 1: Add derived features, drop zero-variance or constant columns.
-    Updates: self.dataframes["feature_engineered"], self.paths["feature_engineering"], self.hashes["feature_engineering"]
+    Perform feature engineering on the raw dataset.
+
+    Adds timestamp-derived features and drops constant columns in training.
+    Stores outputs in self.paths, self.artifacts, and self.dataframes.
     """
-    df = self.dataframes["raw"]
-    global_train_hash = self.config.get("global_train_hash")
     step = "feature_engineering"
-    train_mode = self.train_mode 
-    config = {
-        "columns": sorted(df.columns),
-        "dtypes": {col: str(df[col].dtype) for col in df.columns},
-        "n_rows": df.shape[0],
-        "n_cols": df.shape[1],
-        "n_missing": df.isnull().sum().to_dict(),
-        "n_unique": df.nunique().to_dict(),
-        "n_duplicates": df.duplicated().sum(),
-        "n_constant": df.nunique(dropna=False).eq(1).sum(),
-        "n_zero_variance": df.nunique(dropna=False).eq(1).sum(),
-        "n_constant_columns": df.nunique(dropna=False).eq(1).sum(),
-        "n_zero_variance_columns": df.nunique(dropna=False).eq(1).sum(),
-        "n_categorical": df.select_dtypes(include=["object", "category"]).shape[1],
-        "n_numeric": df.select_dtypes(include=["number"]).shape[1],
-        "train_mode": self.train_mode,
-        "target_col": self.config.get("target_col"),
-        # "target_dtype": str(df[self.config["target_col"]].dtype) if self.config["target_col"] in df.columns else None,
-    }
-    
-    param_hash = make_param_hash(config) if self.train_mode else self.config["train_hash"]  # param_hash = make_param_hash(config) 
-    step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
-    
-    manifest_file = os.path.join(step_dir, "manifest.json")
-    inf_hash = make_param_hash(config) if not self.train_mode else None
-    inf_step_dir = os.path.join("artifacts", f"{step}_{inf_hash}")
-    inf_manifest_file = os.path.join(inf_step_dir, "manifest.json")
+    train_mode = self.train_mode
 
-    final_hash = param_hash if train_mode else inf_hash
-    final_dir = step_dir if train_mode else inf_step_dir
-    if not os.path.exists(final_dir):
-        os.makedirs(final_dir, exist_ok=True)
-    # Save the manifest file in the final directory
+    step_dir = os.path.join("artifacts", f"run_{self.global_hash}", step)
+    manifest_fp = os.path.join(step_dir, "manifest.json")
 
-    if os.path.exists(manifest_file) and train_mode:
-        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
-        self.paths[step] = step_dir
-        self.hashes[step] = param_hash
-        self.dataframes["feature_engineered"] = pd.read_csv(os.path.join(step_dir, f"{step}_{param_hash}.csv"))
-        with open(manifest_file, "r") as f:
+    train_hash = self.global_train_hash
+    train_step_dir = os.path.join("artifacts", f"run_{train_hash}", step)
+    train_manifest_fp = os.path.join(train_step_dir, "manifest.json")
+
+    # ──────────────────────────────────────────────────────────────────
+    # Skip‑guard (spec §14)
+    # ──────────────────────────────────────────────────────────────────
+    if os.path.exists(manifest_fp):
+        with open(manifest_fp, "r", encoding="utf-8") as f:
             manifest = json.load(f)
-            self.artifacts[step] = manifest["outputs"]
+        self.paths[step] = step_dir
+        self.dataframes["feature_engineered"] = pd.read_csv(
+            os.path.join(step_dir, manifest["outputs"]["engineered_csv"])
+        )
+        log_registry(step, self.global_hash, manifest["config"], step_dir)
+        print(f"[{step.upper()}] Skipped – artefacts already exist at {step_dir}")
         return
-    elif os.path.exists(manifest_file) and not train_mode:
-        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
-        self.paths[step] = step_dir
-        self.hashes[step] = inf_hash
-        with open(manifest_file, "r") as f:
-            manifest = json.load(f)
-            # remove the datasets from the manifest["outputs"]
-            del manifest["outputs"]["engineered_csv"]
-            self.artifacts[step] = manifest["outputs"]            
-        if os.path.exists(inf_manifest_file):  
-            # read the data for inference
-            with open(inf_manifest_file, "r") as f:
-                inf_manifest = json.load(f)            
-                self.dataframes["feature_engineered"] = pd.read_csv(os.path.join(inf_step_dir, f"{step}_{inf_hash}.csv"))
-                inf_manifest["outputs"]["engineered_csv"] = self.dataframes["feature_engineered"] 
-                # combine manifest["outputs"] and inf_manifest["outputs"], make sure to remove datasets from manifest["outputs"] and only retain the datasets from inf_manifest["outputs"]
-                inf_manifest["outputs"]["artifacts"] = manifest["outputs"]["artifacts"]
-                self.artifacts[step] = inf_manifest  # {**self.artifacts[step], **inf_manifest["outputs"]}
-                return
-    elif not train_mode and not os.path.exists(manifest_file):  
-        # fail gracefully if no manifest file exists for inference
-        print(f"[{step.upper()}] Error: No manifest file found for inference at {step_dir}")
-        print(f"Please ensure the model was trained and the manifest file exists at {step_dir}")
-        # Fail gracefully
-        assert False, f"[{step.upper()}] Error: No manifest file found for inference at {step_dir}"        
 
-    if train_mode:
+    if not train_mode:
+        if not os.path.exists(train_manifest_fp):
+            raise AssertionError(f"[{step.upper()}] Missing training artefacts at {train_step_dir}")
         os.makedirs(step_dir, exist_ok=True)
-    else:
-        os.makedirs(inf_step_dir, exist_ok=True)
-        
+
+        with open(train_manifest_fp, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        drop_list = manifest["outputs"]["dropped_features"]
+        drop_log = manifest["outputs"]["dropped_features_log"]
+        train_csv = manifest["outputs"]["engineered_csv"]
+
+        df_fe = self.dataframes["raw"].copy()
+        for col in drop_list:
+            if col in df_fe.columns:
+                df_fe.drop(columns=col, inplace=True)
+
+        df_fe.to_csv(os.path.join(step_dir, f"{step}_{self.global_hash}.csv"), index=False)
+
+        copied_manifest = {
+            "step": step,
+            "param_hash": self.global_hash,
+            "timestamp": datetime.utcnow().isoformat(),
+            "config": manifest["config"],
+            "output_dir": step_dir,
+            "outputs": {
+                "engineered_csv": f"{step}_{self.global_hash}.csv",
+                "dropped_features": drop_list,
+                "dropped_features_count": len(drop_list),
+                "dropped_features_log": drop_log,
+                "retained_features": list(df_fe.columns),
+            },
+        }
+
+        with open(manifest_fp, "w", encoding="utf-8") as f:
+            json.dump(copied_manifest, f, indent=2)
+
+        if self.config.get("use_mlflow", False):
+            with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
+                mlflow.set_tags({"step": step, "param_hash": self.global_hash})
+                mlflow.log_artifacts(step_dir, artifact_path=step)
+
+        self.dataframes["feature_engineered"] = df_fe
+        self.paths[step] = step_dir
+        log_registry(step, self.global_hash, manifest["config"], step_dir)
+        print(f"[{step.upper()}] Re‑used training artefacts at {train_step_dir}")
+        return
+
+    # ──────────────────────────────────────────────────────────────────
+    # Training mode – full feature engineering
+    # ──────────────────────────────────────────────────────────────────
+    os.makedirs(step_dir, exist_ok=True)
+    df = self.dataframes["raw"]
     df_fe = df.copy()
 
-    # Feature engineering example: timestamp-based
+    # Timestamp-based features
     if "timestamp" in df_fe.columns:
-        df_fe["transaction_hour"] = pd.to_datetime(df_fe["timestamp"]).dt.hour
-        df_fe["transaction_dayofweek"] = pd.to_datetime(df_fe["timestamp"]).dt.dayofweek
+        ts = pd.to_datetime(df_fe["timestamp"], errors="coerce")
+        df_fe["transaction_hour"] = ts.dt.hour
+        df_fe["transaction_dayofweek"] = ts.dt.dayofweek
 
     for col in ["account_creation_date_client", "account_creation_date_merchant"]:
         if col in df_fe.columns:
-            df_fe[col] = pd.to_datetime(df_fe[col], errors="coerce")
-            df_fe[f"{col}_year"] = df_fe[col].dt.year
-            df_fe[f"{col}_month"] = df_fe[col].dt.month
-            df_fe[f"{col}_day"] = df_fe[col].dt.day
-            df_fe[f"{col}_hour"] = df_fe[col].dt.hour
-            df_fe[f"{col}_dayofweek"] = df_fe[col].dt.dayofweek
+            dt = pd.to_datetime(df_fe[col], errors="coerce")
+            df_fe[f"{col}_year"] = dt.dt.year
+            df_fe[f"{col}_month"] = dt.dt.month
+            df_fe[f"{col}_day"] = dt.dt.day
+            df_fe[f"{col}_hour"] = dt.dt.hour
+            df_fe[f"{col}_dayofweek"] = dt.dt.dayofweek
             if "timestamp" in df_fe.columns:
-                df_fe[f"{col}_age_days"] = (pd.to_datetime(df_fe["timestamp"]) - df_fe[col]).dt.days
+                df_fe[f"{col}_age_days"] = (pd.to_datetime(df_fe["timestamp"]) - dt).dt.days
                 df_fe[f"{col}_age_years"] = df_fe[f"{col}_age_days"] / 365.25
 
+    # Drop constant columns
+    dropped = [col for col in df_fe.columns if df_fe[col].nunique(dropna=False) <= 1]
+    df_fe.drop(columns=dropped, inplace=True)
 
-    #if "account_creation_date_client" in df_fe.columns:
-        #df_fe["client_account_age_days"] = (
-        #    pd.to_datetime(df_fe["timestamp"]) - pd.to_datetime(df_fe["account_creation_date_client"])
-        #).dt.days
-
-    #if "account_creation_date_merchant" in df_fe.columns:
-        #df_fe["merchant_account_age_days"] = (
-        #    pd.to_datetime(df_fe["timestamp"]) - pd.to_datetime(df_fe["account_creation_date_merchant"])
-        #).dt.days
-
-    # Drop constant columns (0 variance or same value)
-    
-    dropped = []
-
-    if train_mode:
-        for col in df_fe.columns:
-            if df_fe[col].nunique(dropna=False) <= 1:
-                dropped.append(col)
-        df_fe.drop(columns=dropped, inplace=True)
-    else:
-        dropped = manifest["outputs"]["dropped_features"]
-        # For inference, drop columns that are not in the training set
-        df_fe.drop(columns=[col for col in dropped if col in df_fe.columns], inplace=True)
-
-    output_csv = os.path.join(final_dir, f"{step}_{final_hash}.csv")
-
-    drop_log = os.path.join(final_dir, f"dropped_features_{final_hash}.json") # if train_mode else os.path.join(inf_step_dir, f"dropped_features_{inf_hash}.json")
+    output_csv = os.path.join(step_dir, f"{step}_{self.global_hash}.csv")
+    drop_log = os.path.join(step_dir, f"dropped_features_{self.global_hash}.json")
 
     df_fe.to_csv(output_csv, index=False)
-    with open(drop_log, "w") as f:
+    with open(drop_log, "w", encoding="utf-8") as f:
         json.dump({"dropped_features": dropped}, f, indent=2)
+
+    config = {
+        "target_col": self.config.get("target_col"),
+        "n_rows": df.shape[0],
+        "n_cols": df.shape[1],
+        "initial_columns": list(df.columns),
+        "final_columns": list(df_fe.columns),
+        "n_dropped": len(dropped),
+        "train_mode": train_mode,
+    }
 
     manifest = {
         "step": step,
-        "param_hash": final_hash,
+        "param_hash": self.global_hash,
         "timestamp": datetime.utcnow().isoformat(),
-        "config": config,
-        "output_dir": final_dir,
+        "config": convert_numpy_types(config),
+        "output_dir": step_dir,
         "outputs": {
-            "engineered_csv": output_csv,
+            "engineered_csv": os.path.basename(output_csv),
             "dropped_features": dropped,
             "dropped_features_count": len(dropped),
-            "dropped_features_log": drop_log,
-            "retained_features": list(set(df_fe.columns) - set(dropped)),
+            "dropped_features_log": os.path.basename(drop_log),
+            "retained_features": list(df_fe.columns),
             "initial_features": list(df.columns),
             "initial_shape": df.shape,
             "final_shape": df_fe.shape,
             "final_features": list(df_fe.columns),
             "new_features": list(set(df_fe.columns) - set(df.columns)),
-        }
+        },
     }
-    manifest = convert_numpy_types(manifest)  # Convert NumPy types to Python native types
-    final_manifest_file = os.path.join(final_dir, "manifest.json")
-    with open(final_manifest_file, "w") as f:
+
+    with open(manifest_fp, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
     if self.config.get("use_mlflow", False):
-        with mlflow.start_run(run_name=f"{step}_{final_hash}"):
-            mlflow.set_tags({"step": step, "param_hash": final_hash})
-            mlflow.log_artifacts(final_dir, artifact_path=step)
-    config = convert_numpy_types(config)  # Convert NumPy types to Python native types
-    log_registry(step, param_hash, config, final_dir)
+        with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
+            mlflow.set_tags({"step": step, "param_hash": self.global_hash})
+            mlflow.log_artifacts(step_dir, artifact_path=step)
+
     self.dataframes["feature_engineered"] = df_fe
-    self.paths[step] = final_dir
-    self.hashes[step] = final_hash
+    self.paths[step] = step_dir
+    log_registry(step, self.global_hash, config, step_dir)
+
+    print(f"[{step.upper()}] Done – artefacts at {step_dir}")
+
+
 
 if __name__ == "__main__":
-    # Example usage to test the feature engineering functionality
-    from ml_pipeline.base import MLPipeline
+    """
+    Smoke‑tests for ml_pipeline.feature_engineering  (spec §19)
+
+    Scenarios exercised
+    -------------------
+    1. Training with no pre‑existing artefacts  (fresh run)
+    2. Training with artefacts present          (skip‑guard hit)
+    3. Inference with required artefacts        (reuse training outputs)
+    4. Inference without artefacts              (must fail clearly)
+    """
+
+    import os
+    import shutil
+    import traceback
     import pandas as pd
     from datetime import datetime, timedelta
-    
-    # Create a simple mock dataset with timestamp and account creation dates
+
+    from ml_pipeline.base import MLPipeline
+    from ml_pipeline.utils import DEFAULT_TEST_HASH
+
+    # Clean slate
+    if os.path.exists("artifacts"):
+        shutil.rmtree("artifacts")
+
     now = datetime.now()
-    mock_data = pd.DataFrame({
-        "client_id": [1, 2, 3, 4, 5],
-        "merchant_id": [101, 102, 103, 101, 102],
-        "amount": [100.0, 50.0, 200.0, 75.0, 125.0],
-        "is_fraud": [0, 0, 1, 0, 1],
-        "timestamp": [
-            now - timedelta(days=1),
-            now - timedelta(days=2),
-            now - timedelta(days=3),
-            now - timedelta(days=4),
-            now - timedelta(days=5)
-        ],
-        "account_creation_date_client": [
-            now - timedelta(days=100),
-            now - timedelta(days=200),
-            now - timedelta(days=300),
-            now - timedelta(days=400),
-            now - timedelta(days=500)
-        ],
-        "account_creation_date_merchant": [
-            now - timedelta(days=1000),
-            now - timedelta(days=1200),
-            now - timedelta(days=1300),
-            now - timedelta(days=1400),
-            now - timedelta(days=1500)
-        ],
-        "constant_col": [1, 1, 1, 1, 1]  # This should be dropped by feature engineering
+    df_demo = pd.DataFrame({
+        "client_id": [1, 2],
+        "merchant_id": [101, 102],
+        "amount": [100.0, 200.0],
+        "is_fraud": [0, 1],
+        "timestamp": [(now - timedelta(days=i)).strftime("%Y-%m-%d %H:%M:%S") for i in [1, 2]],
+        "account_creation_date_client": [(now - timedelta(days=100 + i)).strftime("%Y-%m-%d") for i in [1, 2]],
+        "account_creation_date_merchant": [(now - timedelta(days=1000 + i)).strftime("%Y-%m-%d") for i in [1, 2]],
+        "constant_col": [1, 1],  # To test dropping of constant columns
     })
-    
-    # Convert datetime columns to string format similar to your database
-    for dt_col in ['timestamp', 'account_creation_date_client', 'account_creation_date_merchant']:
-        mock_data[dt_col] = mock_data[dt_col].dt.strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Create a simple configuration for testing
-    test_config = {
-        "target_col": "is_fraud",
-        "use_mlflow": False
-    }
-    
-    # Initialize the pipeline with test configuration
-    pipeline = MLPipeline(config=test_config)
-    
-    # Inject our mock data into the pipeline
-    pipeline.dataframes["raw"] = mock_data
-    
-    # Run the feature engineering step
-    pipeline.feature_engineering()
-    
-    # Check the results
-    df_result = pipeline.dataframes["feature_engineered"]
-    
-    print("Feature Engineering completed successfully!")
-    print(f"Original DataFrame shape: {mock_data.shape}")
-    print(f"Engineered DataFrame shape: {df_result.shape}")
-    print(f"New features added: {set(df_result.columns) - set(mock_data.columns)}")
-    print(f"Features dropped: {set(mock_data.columns) - set(df_result.columns)}")
-    print(f"Output directory: {pipeline.paths['feature_engineering']}")
+
+    # Shared config builder
+    def make_cfg(train_mode: bool, **overrides):
+        base = {
+            "train_mode": train_mode,
+            "model_name": "demo_model",
+            "model_hash": "abc1234",
+            "dataset_name": "demo_ds",
+            "target_col": "is_fraud",
+            "use_mlflow": False,
+            "feature_names": ["amount", "timestamp"],
+        }
+        return {**base, **overrides}
+
+    def safe(label: str, fn):
+        try:
+            fn()
+            print(f"[OK ] {label}")
+        except Exception as exc:
+            print(f"[ERR] {label} → {exc}")
+            traceback.print_exc()
+
+    # 1. Training – fresh run
+    cfg_train = make_cfg(True)
+    pipe_1 = MLPipeline(cfg_train, data_source="raw", raw_data=df_demo)
+    pipe_1.global_hash = DEFAULT_TEST_HASH
+    pipe_1.global_train_hash = DEFAULT_TEST_HASH
+    pipe_1.run_dir = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}")
+    pipe_1.dataframes["raw"] = df_demo
+    safe("TRAIN‑v1: Feature engineering fresh", lambda: pipe_1.feature_engineering())
+
+    # 2. Training – same config, skip‑guard
+    pipe_2 = MLPipeline(cfg_train, data_source="raw", raw_data=df_demo)
+    pipe_2.global_hash = DEFAULT_TEST_HASH
+    pipe_2.global_train_hash = DEFAULT_TEST_HASH
+    pipe_2.run_dir = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}")
+    pipe_2.dataframes["raw"] = df_demo
+    safe("TRAIN‑v2: Feature engineering skip‑guard", lambda: pipe_2.feature_engineering())
+
+    # 3. Inference – valid train_hash reuse
+    cfg_infer = make_cfg(False, train_hash=DEFAULT_TEST_HASH)
+    pipe_3 = MLPipeline(cfg_infer, data_source="raw", raw_data=df_demo)
+    pipe_3.global_hash = DEFAULT_TEST_HASH
+    pipe_3.global_train_hash = DEFAULT_TEST_HASH
+    pipe_3.run_dir = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}")
+    pipe_3.dataframes["raw"] = df_demo
+    safe("INFER: Feature engineering reuse", lambda: pipe_3.feature_engineering())
+
+    # 4. Inference – invalid train_hash (should fail)
+    bad_hash = "not_real_hash123"
+    cfg_fail = make_cfg(False, train_hash=bad_hash)
+    cfg_fail["model_name"] = "new_model"
+    cfg_fail["model_hash"] = "ffff1111"
+    pipe_4 = MLPipeline(cfg_fail, data_source="raw", raw_data=df_demo)
+    pipe_4.global_hash = "feedbead1234"
+    pipe_4.global_train_hash = bad_hash
+    pipe_4.run_dir = os.path.join("artifacts", f"run_{pipe_4.global_hash}")
+    pipe_4.dataframes["raw"] = df_demo
+    try:
+        pipe_4.feature_engineering()
+        raise SystemExit("[TEST] Expected failure not raised")
+    except AssertionError as e:
+        print(f"[OK ] INFER‑fail: Correctly failed → {e}")
