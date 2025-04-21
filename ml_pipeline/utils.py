@@ -25,7 +25,7 @@ import sqlite3
 # ──────────────────────────────────────────────────────────────────────
 # HASHING HELPERS
 # ──────────────────────────────────────────────────────────────────────
-def stable_hash(obj: Any, length: int = 12) -> str:
+def make_param_hash(obj: Any, length: int = 12) -> str:
     """
     Deterministic hash: SHA‑256 over canonical JSON (sorted keys),
     truncated to `length` hex characters.
@@ -160,7 +160,7 @@ if __name__ == "__main__":
         "param2": 123,
         "nested": {"a": 1, "b": 2},
     }
-    print("Stable hash :", stable_hash(dummy_cfg))
+    print("Stable hash :", make_param_hash(dummy_cfg))
 
     # Data load check (non‑existent DB tolerated in smoke‑test)
     try:
