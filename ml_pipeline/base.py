@@ -72,7 +72,7 @@ class MLPipeline:
         self.models    : dict[str, object]       = {}
         self.metrics   : dict[str, dict]         = {}
         self.artifacts : dict[str, dict]         = {}
-
+        self.transformations: dict[str, dict]    = {}
         # ------------------------------------------------ run hash -----
         if self.train_mode:
             full_config = {

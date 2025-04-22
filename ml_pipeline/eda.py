@@ -164,9 +164,11 @@ if __name__ == "__main__":
     from ml_pipeline.base import MLPipeline
     from ml_pipeline.utils import DEFAULT_TEST_HASH
 
-    # Clean slate
-    # if os.path.exists("artifacts"):
-        # shutil.rmtree("artifacts")
+    step = "eda"
+    # Clean up previous artefacts
+    artefact_root = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}", step)
+    if os.path.exists(artefact_root):
+        shutil.rmtree(artefact_root)  # Clean up previous artefacts
 
     df_demo = pd.DataFrame(
         {

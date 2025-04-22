@@ -412,7 +412,7 @@ if __name__ == "__main__":
         if with_created_hash:
             pipe.global_hash = DEFAULT_TEST_HASH  # deterministic hash for tests
         return pipe
-
+    step = "partitioning"
     # ---------------------------------------------------------------
     # Create mock data
     # ---------------------------------------------------------------
@@ -431,9 +431,9 @@ if __name__ == "__main__":
     mock_df.loc[mock_df.sample(frac=0.05, random_state=1).index, "amount"] = np.nan
 
     # Clean up previous artefacts
-    artefact_root = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}")
-    # if os.path.exists(artefact_root):
-        # shutil.rmtree(artefact_root)
+    artefact_root = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}", step)
+    if os.path.exists(artefact_root):
+        shutil.rmtree(artefact_root)  # Clean up previous artefacts
 
     # 1️⃣  Training ‑ fresh
     pipe_train_fresh = build_pipeline(train_mode=True)
