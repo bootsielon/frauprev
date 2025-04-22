@@ -1,526 +1,408 @@
-import os
+"""
+Step 5 – Baseline Model
+=======================
+
+Trains an XGBoost baseline classifier (or re‑uses an existing one) and
+stores artefacts in
+
+    artifacts/run_<self.global_hash>/model_baseline/
+
+Spec compliance highlights
+──────────────────────────
+• No per‑step hashes; folder already embeds the run‑hash (SPEC §1‑§2, §25).  
+• Skip‑guard is the first runtime check (SPEC §14).  
+• Inference logic: reuse → load‑from‑train → raise (SPEC §5).  
+• `self.hashes` removed; `log_registry` invoked (SPEC §3, §7).  
+"""
+
+from __future__ import annotations
+
 import json
-import joblib
-# import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+import os
 from datetime import datetime, timezone
+from typing import Dict, Any
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import mlflow
 from xgboost import XGBClassifier
 from sklearn.metrics import (
-    roc_auc_score, precision_score, recall_score, f1_score,
-    confusion_matrix, accuracy_score, roc_curve, auc
+    accuracy_score,
+    roc_auc_score,
+    roc_curve,
+    auc,
 )
-import mlflow
-from ml_pipeline.utils import make_param_hash, log_registry, save_plot_as_artifact
+
+from ml_pipeline.utils import log_registry, save_plot_as_artifact
 
 
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
+# --------------------------------------------------------------------------- #
+# Helper                                                                      #
+# --------------------------------------------------------------------------- #
+def _load_existing(step_dir: str) -> Dict[str, Any]:
+    """Load model + metrics previously saved in *step_dir*."""
+    artefacts = {}
+    model_fp = os.path.join(step_dir, "model.json")
+    if os.path.exists(model_fp):
+        model = XGBClassifier()
+        model.load_model(model_fp)
+        artefacts["model"] = model
+
+    metrics_fp = os.path.join(step_dir, "metrics.json")
+    if os.path.exists(metrics_fp):
+        with open(metrics_fp) as fh:
+            artefacts["metrics"] = json.load(fh)
+
+    features_fp = os.path.join(step_dir, "feature_names.json")
+    if os.path.exists(features_fp):
+        with open(features_fp) as fh:
+            meta = json.load(fh)
+            if "model" in artefacts:
+                artefacts["model"].feature_names = meta["feature_names"]
+            artefacts["feature_names"] = meta["feature_names"]
+
+    return artefacts
+
+
+# --------------------------------------------------------------------------- #
+# Main pipeline step                                                          #
+# --------------------------------------------------------------------------- #
+def model_baseline(self) -> None:  # type: ignore[override]
     """
-    Compute classification metrics for binary classification.
-    """
-    auc = roc_auc_score(y_true, y_prob)
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-    return {
-        "auroc": auc,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "sensitivity": sensitivity,
-        "specificity": specificity
-    }
-
-
-def model_baseline(self) -> None:
-    """
-    Step 5: Train baseline model and evaluate performance.
-    
-    Updates:
-        self.models["baseline"]
-        self.metrics["baseline"]
-        self.paths["model_baseline"]
-        self.hashes["model_baseline"]
+    Train or load the baseline XGBoost classifier.
     """
     step = "model_baseline"
-    
-    # Load scaled data from previous step
+    run_step_dir = os.path.join("artifacts", f"run_{self.global_hash}", step)
+    manifest_fp = os.path.join(run_step_dir, "manifest.json")
+
+    # ------------------------------------------------------------------- #
+    # 0️⃣  Skip‑guard – artefacts already in *current* run                #
+    # ------------------------------------------------------------------- #
+    if os.path.exists(manifest_fp):
+        print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
+        artefacts = _load_existing(run_step_dir)
+        self.models["baseline"] = artefacts["model"]
+        self.metrics["baseline"] = artefacts["metrics"]
+        self.paths[step] = run_step_dir
+        self.artifacts[step] = {
+            "model_file": os.path.join(run_step_dir, "model.json"),
+            "metrics_file": os.path.join(run_step_dir, "metrics.json"),
+            "feature_names_file": os.path.join(run_step_dir, "feature_names.json"),
+        }
+        return
+
+    # ------------------------------------------------------------------- #
+    # 1️⃣  Inference → load artefacts from the training run               #
+    # ------------------------------------------------------------------- #
+    if not self.train_mode:
+        train_step_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
+        train_manifest = os.path.join(train_step_dir, "manifest.json")
+        if os.path.exists(train_manifest):
+            print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
+            artefacts = _load_existing(train_step_dir)
+            self.models["baseline"] = artefacts["model"]
+            self.metrics["baseline"] = artefacts["metrics"]
+            self.paths[step] = train_step_dir
+            self.artifacts[step] = {
+                "model_file": os.path.join(train_step_dir, "model.json"),
+                "metrics_file": os.path.join(train_step_dir, "metrics.json"),
+                "feature_names_file": os.path.join(train_step_dir, "feature_names.json"),
+            }
+            return
+        raise FileNotFoundError(
+            f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
+        )
+
+    # ------------------------------------------------------------------- #
+    # 2️⃣  Training mode – compute and persist                            #
+    # ------------------------------------------------------------------- #
+    cfg = self.config
+    seed = cfg.get("random_state", 42)
+    np.random.seed(seed)
+
+    targ = cfg["target_col"]
+
+    # -------------------- fetch scaled data generated earlier ----------
     train_df = self.dataframes["train_sca"]
     val_df = self.dataframes["val_sca"]
     test_df = self.dataframes["test_sca"]
-    excluded_df = self.dataframes.get("excluded_sca", None)
+    excl_df = self.dataframes.get("excluded_sca")
 
-    # Diagnostic information
-    print(f"[{step.upper()}] Checking scaled dataframes...")
-    print(f"  - Target column name: '{self.config['target_col']}'")
-    # print(f"  - Train columns: {train_df.columns.tolist()}")
-    # print(f"  - Did scaling step run from scratch? {self.artifacts.get('scaling', {}).get('train_scaled_csv') is not None}")
-    
-    print(f"  - Train dataset shape: {train_df.shape}")
-    print(f"  - Validation dataset shape: {val_df.shape}")
-    print(f"  - Test dataset shape: {test_df.shape}")
-    if excluded_df is not None:
-        print(f"  - Holdout dataset shape: {excluded_df.shape}")
-    else:
-        print("  - No holdout dataset available.")
-    targname = self.config['target_col']
-    # Print available dataframe keys for debugging
-    print(f"[{step.upper()}] Target value investigation:")
-    print(f"  - Train dataset target values: {train_df[targname].unique().tolist()}")
-    print(f"  - Validation dataset target values: {val_df[targname].unique().tolist()}")
-    print(f"  - Test dataset target values: {test_df[targname].unique().tolist()}")
-    
-    # Check if excluded data exists (just once)
-    if excluded_df is not None:
-        print(f"  - Holdout dataset target values: {excluded_df[targname].unique().tolist()}")
-    else:
-        print("  - No holdout dataset available.")
+    # drop potential non‑numeric leftovers
+    drop_obj = [c for c in train_df.columns if train_df[c].dtype == "object"]
+    if drop_obj:
+        print(f"[{step.upper()}] Dropping object columns: {drop_obj}")
+        train_df = train_df.drop(columns=drop_obj)
+        val_df = val_df.drop(columns=drop_obj)
+        test_df = test_df.drop(columns=drop_obj)
+        if excl_df is not None:
+            excl_df = excl_df.drop(columns=drop_obj)
 
-    # Print original target values
-    print(f"  - Original feature_engineered target values: {self.dataframes['feature_engineered'][targname].unique().tolist()}")
-    
-    # Print previous step info
-    print(f"  - Previous step: numeric_conversion, path: {self.paths['numeric_conversion']}")
-    # print(f"  - numeric_conversion config: {self.transformations['numeric_conversion']['grouping_map'].keys()}")
-    
-    # Basic configuration
-    config = {
-        "n_estimators": self.config.get("n_estimators", 400),
-        "max_depth": self.config.get("max_depth", 4),
-        "learning_rate": self.config.get("learning_rate", 0.01),
-        "subsample": self.config.get("subsample", 0.8),
-        "colsample_bytree": self.config.get("colsample_bytree", 0.8),
-        "random_state": self.config.get("random_state", 42)
-    }
-    
-    param_hash = make_param_hash(config)
-    step_dir = os.path.join("artifacts", f"{step}_{param_hash}")
-    manifest_file = os.path.join(step_dir, "manifest.json")
-    
-    if os.path.exists(manifest_file):
-        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
-        
-        # Load manifest to get correct file paths
-        with open(manifest_file, "r") as f:
-            manifest = json.load(f)
-        
-        # Load model using XGBoost's load_model
-        model = XGBClassifier()
-        model_file = manifest["outputs"]["model_file"]
-        model.load_model(model_file)
-        
-        # Load feature names and add them to the model
-        with open(manifest["outputs"]["feature_names_file"], "r") as f:
-            feature_data = json.load(f)
-            model.feature_names = feature_data["feature_names"]
-        
-        # Load metrics
-        with open(manifest["outputs"]["metrics_file"], "r") as f:
-            metrics = json.load(f)
-        
-        # Update pipeline state
-        self.models["baseline"] = model
-        self.metrics["baseline"] = metrics
-        self.artifacts[step] = manifest["outputs"]
-        self.paths[step] = step_dir
-        self.hashes[step] = param_hash
-        print(f"[{step.upper()}] Loaded model and metrics from checkpoint")
-        return    
-    
-    os.makedirs(step_dir, exist_ok=True)
-    
-    # Prepare data
-    target_values = train_df[targname].unique()
-    if set(target_values) != {0, 1}:
-        print(f"[{step.upper()}] Warning: Non-standard target values detected: {target_values}. Transforming to 0/1 format for XGBoost.")
-        # Map target values to 0/1
-        target_mapping = {val: i for i, val in enumerate(target_values)}
-        train_df[targname] = train_df[targname].map(target_mapping)
-        val_df[targname] = val_df[targname].map(target_mapping)
-        test_df[targname] = test_df[targname].map(target_mapping)
-        excluded_df[targname] = excluded_df[targname].map(target_mapping) if excluded_df is not None else None
-    
-    # Print class distribution
-    print(f"[{step.upper()}] Class distribution in training set: {dict(train_df[targname].value_counts())}")
-    
-    # Prepare X and y
-    X_train = train_df.drop(targname, axis=1)
-    y_train = train_df[targname]
+    feature_cols = [c for c in train_df.columns if c != targ]
 
-    X_val = val_df.drop(targname, axis=1)
-    y_val = val_df[targname]
+    X_train, y_train = train_df[feature_cols], train_df[targ]
+    X_val, y_val = val_df[feature_cols], val_df[targ]
+    X_test, y_test = test_df[feature_cols], test_df[targ]
+    if excl_df is not None:
+        X_excl, y_excl = excl_df[feature_cols], excl_df[targ]
 
-    X_test = test_df.drop(targname, axis=1)
-    y_test = test_df[targname]
-    
-    if excluded_df is not None:
-        X_excluded = excluded_df.drop(targname, axis=1)
-        y_excluded = excluded_df[targname]
-    else:  
-        X_excluded = None
-        y_excluded = None
-
-    # Handle object columns that XGBoost can't process
-    object_columns = [col for col in X_train.columns if X_train[col].dtype == 'object']
-    if object_columns:
-        print(f"[{step.upper()}] Dropping object columns for XGBoost compatibility: {object_columns}")
-        X_train = X_train.drop(columns=object_columns)
-        X_val = X_val.drop(columns=object_columns)
-        X_test = X_test.drop(columns=object_columns)
-        X_excluded = X_excluded.drop(columns=object_columns) if excluded_df is not None else None
-        # Convert object columns to categorical if needed
-        if excluded_df is not None:
-            X_excluded = excluded_df.drop(targname, axis=1)
-            X_excluded = X_excluded.drop(columns=object_columns, errors='ignore')
-    else:
-        if excluded_df is not None:
-            X_excluded = excluded_df.drop(targname, axis=1)
-            y_excluded = excluded_df[targname]
-        else:
-            X_excluded = None
-            y_excluded = None
-
-    # Store feature names for consistency
-    feature_names = X_train.columns.tolist()
-    feature_names_file = os.path.join(step_dir, f"feature_names_{param_hash}.json")
-    with open(feature_names_file, "w") as f:
-        json.dump({"feature_names": feature_names}, f, indent=2)
-
-    # Ensure all datasets have the same columns in the same order
-    X_train = X_train[feature_names]
-    X_val = X_val[feature_names]  # self.ensure_column_consistency(X_val, feature_names)
-    X_test = X_test[feature_names]  # self.ensure_column_consistency(X_test, feature_names)
-    X_excluded = X_excluded[feature_names] if excluded_df is not None else None  # self.ensure_column_consistency(X_excluded, feature_names) if excluded_df is not None else None
-    # X_excluded = self.ensure_column_consistency(X_excluded, feature_names) if excluded_df is not None else None
-    # Ensure excluded_df has the same columns in the same order
-    # if excluded_df is not None:
-        # X_excluded = self.ensure_column_consistency(X_excluded, feature_names)
-    
-    # IMPORTANT FIX: When training, we need to make sure we use the SAME EXACT columns for train/test/val/excluded
-    # Get the list of feature columns from the transformations that were stored in the numeric_conversion step
-    """    if "feature_columns" in self.transformations["numeric_conversion"]:
-            feature_columns = self.transformations["numeric_conversion"]["feature_columns"]
-            feature_columns = [col for col in feature_columns if col != targname]
-        else:
-            # Fall back to just using the train columns if not explicitly stored
-            feature_columns = [col for col in X_train.columns if col != targname]
-        
-        # Ensure all datasets have exactly the same columns in the same order
-        X_train = X_train[feature_columns]
-        X_val = val_df[feature_columns]
-        X_test = test_df[feature_columns]
-        X_excluded = excluded_df[feature_columns] if excluded_df is not None else None
-    """    
-    # if excluded_df is not None:
-        # X_excluded = excluded_df[feature_columns]
-    
-    # Train model
+    # ------------------------------- train model -----------------------
     model = XGBClassifier(
-        n_estimators=config["n_estimators"],
-        max_depth=config["max_depth"],
-        learning_rate=config["learning_rate"],
-        subsample=config["subsample"],
-        colsample_bytree=config["colsample_bytree"],
-        random_state=config["random_state"],
+        n_estimators=cfg.get("n_estimators", 400),
+        max_depth=cfg.get("max_depth", 4),
+        learning_rate=cfg.get("learning_rate", 0.01),
+        subsample=cfg.get("subsample", 0.8),
+        colsample_bytree=cfg.get("colsample_bytree", 0.8),
+        random_state=seed,
         use_label_encoder=False,
-        eval_metric='auc'#'logloss'
+        eval_metric="auc",
     )
-    
-    # Set feature_names explicitly to avoid mismatch errors
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)])
-    
-    # Store feature names in the model
-    model.feature_names = feature_names
-    
-    # Evaluate model
-    print(f"[{step.upper()}] Target value mapping: {target_mapping if 'target_mapping' in locals() else 'No mapping needed'}")
-    
-    # Make predictions - ensure feature consistency!
-    y_pred_train = model.predict(X_train)
-    y_prob_train = model.predict_proba(X_train)[:, 1]
-    
-    y_pred_val = model.predict(X_val)
-    y_prob_val = model.predict_proba(X_val)[:, 1]
-    
-    y_pred_test = model.predict(X_test)
-    y_prob_test = model.predict_proba(X_test)[:, 1]
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    model.feature_names = feature_cols  # keep explicit list
 
-    y_pred_excluded = model.predict(X_excluded) if excluded_df is not None else None
-    y_prob_excluded = model.predict_proba(X_excluded)[:, 1] if excluded_df is not None else None
+    # ------------------------------- metrics ---------------------------
+    def _roc(y_true, y_prob):
+        return roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else 0.5
 
-    # Calculate metrics
     metrics = {
         "train": {
-            "accuracy": accuracy_score(y_train, y_pred_train),
-            "roc_auc": roc_auc_score(y_train, y_prob_train) if len(np.unique(y_train)) > 1 else 0.5
+            "accuracy": accuracy_score(y_train, model.predict(X_train)),
+            "roc_auc": _roc(y_train, model.predict_proba(X_train)[:, 1]),
         },
         "val": {
-            "accuracy": accuracy_score(y_val, y_pred_val),
-            "roc_auc": roc_auc_score(y_val, y_prob_val) if len(np.unique(y_val)) > 1 else 0.5
+            "accuracy": accuracy_score(y_val, model.predict(X_val)),
+            "roc_auc": _roc(y_val, model.predict_proba(X_val)[:, 1]),
         },
         "test": {
-            "accuracy": accuracy_score(y_test, y_pred_test),
-            "roc_auc": roc_auc_score(y_test, y_prob_test) if len(np.unique(y_test)) > 1 else 0.5
+            "accuracy": accuracy_score(y_test, model.predict(X_test)),
+            "roc_auc": _roc(y_test, model.predict_proba(X_test)[:, 1]),
         },
-        "excluded": { #None  # Placeholder for excluded metrics
-            "accuracy": accuracy_score(y_excluded, y_pred_excluded) if excluded_df is not None else None,
-            "roc_auc": roc_auc_score(y_excluded, y_prob_excluded) if len(np.unique(y_excluded)) > 1 else 0.5 if excluded_df is not None else None
+    }
+    if excl_df is not None:
+        metrics["excluded"] = {
+            "accuracy": accuracy_score(y_excl, model.predict(X_excl)),
+            "roc_auc": _roc(y_excl, model.predict_proba(X_excl)[:, 1]),
         }
 
-    }
-    
-    """    
-    if excluded_df is not None:
-        y_excluded = excluded_df["target"]
-        y_pred_excluded = model.predict(X_excluded)
-        
-        # Only calculate probabilistic metrics if we have both classes
-        if len(np.unique(y_excluded)) > 1:
-            y_prob_excluded = model.predict_proba(X_excluded)[:, 1]
-            metrics["excluded"] = {
-                "accuracy": accuracy_score(y_excluded, y_pred_excluded),
-                "roc_auc": roc_auc_score(y_excluded, y_prob_excluded)
-            }
-        else:
-            metrics["excluded"] = {
-                "accuracy": accuracy_score(y_excluded, y_pred_excluded),
-                "roc_auc": "N/A - only one class present"
-            }
-    """
+    # ------------------------------- persist artefacts -----------------
+    os.makedirs(run_step_dir, exist_ok=True)
+    model_fp = os.path.join(run_step_dir, "model.json")
+    metrics_fp = os.path.join(run_step_dir, "metrics.json")
+    features_fp = os.path.join(run_step_dir, "feature_names.json")
 
-    # Save model and metrics
-    model_file = os.path.join(step_dir, f"model_{param_hash}.json")
-    metrics_file = os.path.join(step_dir, f"metrics_{param_hash}.json")
-    
-    # Save model using built-in save method
-    model.save_model(model_file)
-    
-    # Save metrics to JSON
-    with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=2)
-    
-    # Create and save manifest
+    model.save_model(model_fp)
+    with open(metrics_fp, "w") as fh:
+        json.dump(metrics, fh, indent=2)
+    with open(features_fp, "w") as fh:
+        json.dump({"feature_names": feature_cols}, fh, indent=2)
+
+    # feature importance plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    importances = model.feature_importances_
+    order = np.argsort(importances)[::-1]
+    ax.bar(range(len(importances)), importances[order])
+    ax.set_xticks(range(len(importances)))
+    ax.set_xticklabels(np.array(feature_cols)[order], rotation=45, ha="right")
+    ax.set_title("Feature Importances")
+    fig.tight_layout()
+    fi_png = os.path.join(run_step_dir, "feature_importance.png")
+    save_plot_as_artifact(fig, fi_png, {}, "dummy")  # dict not used further
+
+    # ROC curve (test set)
+    fpr, tpr, _ = roc_curve(y_test, model.predict_proba(X_test)[:, 1])
+    roc_auc = auc(fpr, tpr)
+    fig_roc, ax_roc = plt.subplots()
+    ax_roc.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.2f}")
+    ax_roc.plot([0, 1], [0, 1], "--")
+    ax_roc.set_xlabel("FPR"), ax_roc.set_ylabel("TPR")
+    ax_roc.set_title("ROC – Test")
+    ax_roc.legend()
+    roc_png = os.path.join(run_step_dir, "roc_curve.png")
+    save_plot_as_artifact(fig_roc, roc_png, {}, "dummy2")
+
     manifest = {
         "step": step,
-        "param_hash": param_hash,
+        "param_hash": self.global_hash,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "config": config,
-        "output_dir": step_dir,
-        "outputs": {
-            "model_file": model_file,
-            "metrics_file": metrics_file,
-            "feature_names_file": feature_names_file
+        "config": {
+            k: cfg.get(k)
+            for k in (
+                "n_estimators",
+                "max_depth",
+                "learning_rate",
+                "subsample",
+                "colsample_bytree",
+                "random_state",
+            )
         },
-        "metrics": metrics
+        "output_dir": run_step_dir,
+        "outputs": {
+            "model_file": os.path.basename(model_fp),
+            "metrics_file": os.path.basename(metrics_fp),
+            "feature_names_file": os.path.basename(features_fp),
+            "feature_importance_png": os.path.basename(fi_png),
+            "roc_curve_png": os.path.basename(roc_png),
+        },
+        "metrics": metrics,
     }
-    
-    with open(manifest_file, "w") as f:
-        json.dump(manifest, f, indent=2)
-    
-    if self.config.get("use_mlflow", False):
-        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
-            mlflow.set_tags({"step": step, "param_hash": param_hash})
-            mlflow.log_artifacts(step_dir, artifact_path=step)
-            mlflow.log_metrics({f"{dataset}_{metric}": value 
-                             for dataset, metrics_dict in metrics.items() 
-                             for metric, value in metrics_dict.items() 
-                             if not isinstance(value, str)})
-    
-    log_registry(step, param_hash, config, step_dir)
-    
-    # Update pipeline state
+    with open(manifest_fp, "w") as fh:
+        json.dump(manifest, fh, indent=2)
+
+    # ------------------------------- MLflow / registry -----------------
+    if cfg.get("use_mlflow", False):
+        with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
+            mlflow.set_tags({"step": step, "global_hash": self.global_hash})
+            mlflow.log_artifacts(run_step_dir, artifact_path=step)
+            flat_metrics = {
+                f"{ds}_{m}": v
+                for ds, mset in metrics.items()
+                for m, v in mset.items()
+                if v is not None
+            }
+            mlflow.log_metrics(flat_metrics)
+
+    log_registry(step, self.global_hash, manifest["config"], run_step_dir)
+
+    # ------------------------------- update pipeline -------------------
     self.models["baseline"] = model
     self.metrics["baseline"] = metrics
-    self.paths[step] = step_dir
-    self.hashes[step] = param_hash
+    self.paths[step] = run_step_dir
     self.artifacts[step] = manifest["outputs"]
 
-    # Feature Importance Plot
-    importances = model.feature_importances_
-    feature_names = model.feature_names
-    indices = np.argsort(importances)[::-1]
+    print(
+        f"[{step.upper()}] Done – artefacts at {run_step_dir}  "
+        f"(test AUC {metrics['test']['roc_auc']:.3f})"
+    )
 
-    fig_fi, ax_fi = plt.subplots(figsize=(10, 6))
-    ax_fi.bar(range(len(importances)), importances[indices], align="center")
-    ax_fi.set_xticks(range(len(importances)))
-    ax_fi.set_xticklabels(np.array(feature_names)[indices], rotation=45, ha="right")
-    ax_fi.set_title("Feature Importances")
-    ax_fi.set_ylabel("Importance")
-    fig_fi.tight_layout()
-    fi_plot_path = os.path.join(step_dir, "feature_importance.png")
-    save_plot_as_artifact(fig_fi, fi_plot_path, self.artifacts[step], "feature_importance_png")
-
-    # After model is trained and predictions are made:
-    if "test_sca" in self.dataframes:
-        X_test = self.dataframes["test_sca"].drop(self.config["target_col"], axis=1)
-        y_test = self.dataframes["test_sca"][self.config["target_col"]]
-        X_test = X_test[model.feature_names]
-        y_prob = model.predict_proba(X_test)[:, 1]
-        fpr, tpr, _ = roc_curve(y_test, y_prob)
-        roc_auc = auc(fpr, tpr)
-
-        plt.figure(figsize=(8, 6))
-        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('Receiver Operating Characteristic (ROC) Curve')
-        plt.legend(loc="lower right")
-        base_roc_img_name = f"baseline_roc_curve_{param_hash}"
-        roc_plot_path = os.path.join(step_dir, f"{base_roc_img_name}.png")
-        save_plot_as_artifact(plt.gcf(), roc_plot_path, self.artifacts[step], base_roc_img_name)  # plt.savefig(roc_plot_path)
-        plt.close()  # plt.savefig(roc_plot_path) # plt.close() # self.artifacts[step]["roc_curve_png"] = roc_plot_path
 
 if __name__ == "__main__":
-    # Example usage to test the model baseline functionality
-    from ml_pipeline.base import MLPipeline
-    import pandas as pd
-    import numpy as np
-    
-    # Create mock datasets for testing
-    np.random.seed(42)
-    n_samples = 1000
-    
-    # Create features that have some predictive power
-    feature1 = np.random.normal(0, 1, n_samples)
-    feature2 = np.random.normal(0, 1, n_samples)
-    feature3 = np.random.normal(0, 1, n_samples)
-    
-    # Create a target variable with some relationship to the features
-    target_prob = 1 / (1 + np.exp(-(0.5*feature1 - 0.7*feature2 + 0.3*feature3)))
-    target = np.random.binomial(1, target_prob)
-    
-    # Create a dataset with these features
-    mock_data = pd.DataFrame({
-        "id": range(1, n_samples + 1),
-        "feature1": feature1,
-        "feature2": feature2,
-        "feature3": feature3,
-        "feature4": np.random.normal(0, 1, n_samples),  # noise feature
-        "feature5": np.random.normal(0, 1, n_samples),  # noise feature
-        "target": target
-    })
-    
-    # Split into train, val, test, excluded
-    train_size = int(0.6 * n_samples)
-    val_size = int(0.2 * n_samples)
-    test_size = int(0.15 * n_samples)
-    excluded_size = n_samples - train_size - val_size - test_size
-    
-    train_data = mock_data.iloc[:train_size].copy()
-    val_data = mock_data.iloc[train_size:train_size+val_size].copy()
-    test_data = mock_data.iloc[train_size+val_size:train_size+val_size+test_size].copy()
-    excluded_data = mock_data.iloc[train_size+val_size+test_size:].copy()
-    
-    # Create a test configuration
-    test_config = {
-        "target_col": "target",
-        "id_col": "id",
-        "use_mlflow": False,
-        "n_estimators": 100,
-        "max_depth": 3,
-        "learning_rate": 0.1,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "random_state": 42
-    }
-    
-    # Initialize the pipeline with test configuration
-    pipeline = MLPipeline(config=test_config)
-    
-    # Add mock data to the pipeline state (as if it came from scaling)
-    pipeline.dataframes = {
-        "train_sca": train_data,
-        "val_sca": val_data,
-        "test_sca": test_data,
-        "excluded_sca": excluded_data,
-        "feature_engineered": mock_data  # Also add the original data for reference
-    }
-    
-    # Add previous step paths for proper linking
-    pipeline.paths = {
-        "numeric_conversion": "artifacts/numeric_conversion_abcdef",
-        "scaling": "artifacts/scaling_123456"
-    }
-    
-    # Add transformations dictionary that might be needed
-    pipeline.transformations = {
-        "numeric_conversion": {
-            "feature_columns": mock_data.columns.tolist()
-        }
-    }
-    
-    # Run the model baseline step
-    pipeline.model_baseline()
-    
-    # Display results summary
-    print("\nModel Baseline Results Summary:")
-    print("-" * 40)
-    
-    # Show model metrics
-    print("Model Performance Metrics:")
-    for dataset, metrics in pipeline.metrics["baseline"].items():
-        if dataset != "excluded" or metrics["accuracy"] is not None:
-            print(f"\n{dataset.upper()} SET METRICS:")
-            for metric, value in metrics.items():
-                if value is not None:
-                    print(f"  {metric}: {value:.4f}")
-    
-    # Show feature importances
-    model = pipeline.models["baseline"]
-    importances = model.feature_importances_
-    feature_names = model.feature_names
-    
-    print("\nFeature Importances:")
-    for feature, importance in sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True):
-        print(f"  {feature}: {importance:.4f}")
-    
+    """
+    Smoke‑tests for ml_pipeline.model_baseline  (SPEC §19)
 
-    # Show output directory
-    print(f"\nOutput directory: {pipeline.paths['model_baseline']}")
-    print(f"Artifacts created: {list(pipeline.artifacts.get('model_baseline', {}).keys())}")
-    
-    # Optional: Plot ROC curve
+    Fix: indices were reset *before* the .drop() calls, triggering a KeyError.
+    We now keep the original indices for drop‑based splitting and reset them
+    only afterwards.
+    """
+    import os
+    import shutil
+    import traceback
+
+    import numpy as np
+    import pandas as pd
+
+    from ml_pipeline.base import MLPipeline
+    from ml_pipeline.utils import DEFAULT_TEST_HASH
+
+    step = "model_baseline"
+
+    # ------------------------------------------------------------------ #
+    # Helper                                                             #
+    # ------------------------------------------------------------------ #
+    def build_cfg(train_mode: bool, **kw) -> dict:
+        cfg: dict = {
+            "train_mode": train_mode,
+            "model_name": "dummy_model",
+            "model_hash": "abcd1234",
+            "dataset_name": "dummy_ds",
+            "feature_names": ["f1", "f2"],
+            "target_col": "target",
+            "id_col": "id",
+            "random_state": 123,
+            "use_mlflow": False,
+            "n_estimators": 50,
+        }
+        if not train_mode:
+            cfg["train_hash"] = kw.get("train_hash")
+        return cfg
+
+    def safe(label: str, fn):
+        try:
+            fn()
+            print(f"[OK ] {label}")
+        except Exception as exc:
+            print(f"[ERR] {label} → {exc}")
+            traceback.print_exc()
+
+    # ------------------------------------------------------------------ #
+    # Create deterministic numeric data                                  #
+    # ------------------------------------------------------------------ #
+    np.random.seed(42)
+    n = 150
+    mock_df = pd.DataFrame(
+        {
+            "id": range(1, n + 1),
+            "f1": np.random.normal(0, 1, n),
+            "f2": np.random.normal(5, 2, n),
+            "target": np.random.choice([0, 1], n, p=[0.75, 0.25]),
+        }
+    )
+
+    # simple split – keep indices intact for `.drop()`
+    train_df = mock_df.sample(frac=0.6, random_state=1)
+    val_df = mock_df.drop(train_df.index).sample(frac=0.4, random_state=2)
+    test_df = mock_df.drop(train_df.index).drop(val_df.index)
+    excl_df = mock_df.sample(20, random_state=3)
+
+    # finally reset indices
+    train_df.reset_index(drop=True, inplace=True)
+    val_df.reset_index(drop=True, inplace=True)
+    test_df.reset_index(drop=True, inplace=True)
+    excl_df.reset_index(drop=True, inplace=True)
+
+    # ------------------------------------------------------------------ #
+    # Clean slate                                                         #
+    # ------------------------------------------------------------------ #
+    artefact_root = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}", step)
+    if os.path.exists(artefact_root):
+        shutil.rmtree(artefact_root)
+
+    # 1️⃣  Training – fresh artefacts
+    pipe_train = MLPipeline(build_cfg(True))
+    pipe_train.global_hash = DEFAULT_TEST_HASH
+    pipe_train.global_train_hash = DEFAULT_TEST_HASH
+    pipe_train.dataframes = {
+        "train_sca": train_df,
+        "val_sca": val_df,
+        "test_sca": test_df,
+        "excluded_sca": excl_df,
+    }
+    print("\n>>> TRAINING RUN (fresh artefacts)")
+    safe("TRAIN‑fresh", pipe_train.model_baseline)
+
+    # 2️⃣  Training – skip‑guard
+    pipe_train_skip = MLPipeline(build_cfg(True))
+    pipe_train_skip.global_hash = DEFAULT_TEST_HASH
+    pipe_train_skip.global_train_hash = DEFAULT_TEST_HASH
+    pipe_train_skip.dataframes = {
+        "train_sca": train_df,
+        "val_sca": val_df,
+        "test_sca": test_df,
+    }
+    print("\n>>> TRAINING RUN (should skip)")
+    safe("TRAIN‑skip‑guard", pipe_train_skip.model_baseline)
+
+    # 3️⃣  Inference – artefacts present
+    infer_hash_ok = "abcabcabcabc"
+    pipe_infer_ok = MLPipeline(build_cfg(False, train_hash=DEFAULT_TEST_HASH))
+    pipe_infer_ok.global_hash = infer_hash_ok
+    pipe_infer_ok.global_train_hash = DEFAULT_TEST_HASH
+    pipe_infer_ok.dataframes = {"test_sca": test_df}
+    print("\n>>> INFERENCE RUN (artefacts present)")
+    safe("INFER‑reuse", pipe_infer_ok.model_baseline)
+
+    # 4️⃣  Inference – artefacts missing (should fail)
+    missing_train_hash = "feedfeedfeed"
+    miss_dir = os.path.join("artifacts", f"run_{missing_train_hash}", step)
+    if os.path.exists(miss_dir):
+        shutil.rmtree(miss_dir)
+
+    pipe_infer_fail = MLPipeline(build_cfg(False, train_hash=missing_train_hash))
+    pipe_infer_fail.global_hash = "deadbeef0000"
+    pipe_infer_fail.global_train_hash = missing_train_hash
+    print("\n>>> INFERENCE RUN (artefacts missing – should fail)")
     try:
-        # import matplotlib.pyplot as plt
-        # from sklearn.metrics import roc_curve, auc
-        
-        # Get test predictions
-        X_test = test_data.drop(test_config["target_col"], axis=1)
-        y_test = test_data[test_config["target_col"]]
-        
-        # Ensure we're using the same feature columns as the model
-        X_test = X_test[model.feature_names]
-        
-        # Get prediction probabilities
-        y_prob = model.predict_proba(X_test)[:, 1]
-        
-        # Calculate ROC curve
-        fpr, tpr, _ = roc_curve(y_test, y_prob)
-        roc_auc = auc(fpr, tpr)
-        
-        # Plot
-        plt.figure(figsize=(8, 6))
-        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('Receiver Operating Characteristic (ROC) Curve')
-        plt.legend(loc="lower right")
-        
-        # Save the plot
-        roc_plot_path = os.path.join(pipeline.paths["model_baseline"], "roc_curve.png")
-        plt.savefig(roc_plot_path)
-        print(f"\nROC curve saved to: {roc_plot_path}")
-        
-        # Show the plot
-        plt.show()
-    except ImportError:
-        print("\nMatplotlib not available - skipping ROC curve plot")
+        pipe_infer_fail.model_baseline()
+        print("❌  ERROR: Missing‑artefact inference did *not* fail as expected")
+    except FileNotFoundError as e:
+        print(f"✅  Caught expected error → {e}")
