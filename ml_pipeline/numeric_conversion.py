@@ -313,9 +313,14 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     manifest = {
         "step": step,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "config": {
-            k: cfg[k] for k in ("c1", "c2", "b1", "c3", "id_like_exempt", "central_tendency")
-        },
+        #"config": {
+        #    k: cfg[k] for k in ("c1", "c2", "b1", "c3", "id_like_exempt", "central_tendency")
+        #},
+        # use cfg.get(...) so that truly optional keys
+        # do not raise KeyError (SPEC §16 – correctness)
+        "config": {k: cfg.get(k)
+                   for k in ("c1", "c2", "b1", "c3",
+                             "id_like_exempt", "central_tendency")},
         "output_dir": run_step_dir,
         "outputs": outputs,
     }
