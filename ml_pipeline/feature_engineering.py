@@ -200,8 +200,8 @@ if __name__ == "__main__":
     from ml_pipeline.utils import DEFAULT_TEST_HASH
 
     # Clean slate
-    if os.path.exists("artifacts"):
-        shutil.rmtree("artifacts")
+    # if os.path.exists("artifacts"):
+        # shutil.rmtree("artifacts")
 
     now = datetime.now()
     df_demo = pd.DataFrame({

@@ -237,8 +237,8 @@ if __name__ == "__main__":
         DEFAULT_TEST_HASH = "deadbeefcaf0"
 
     # fresh workspace for repeatability
-    if os.path.exists("artifacts"):
-        shutil.rmtree("artifacts")
+    # if os.path.exists("artifacts"):
+        # shutil.rmtree("artifacts")
 
     df_demo = pd.DataFrame(
         {
