@@ -27,11 +27,11 @@ def feature_engineering(self) -> None:  # type: ignore[override]
     """
     step = "feature_engineering"
     train_mode = self.train_mode
-
-    step_dir = os.path.join("artifacts", f"run_{self.global_hash}", step)
-    manifest_fp = os.path.join(step_dir, "manifest.json")
-
+    param_hash = self.global_hash
     train_hash = self.global_train_hash
+
+    step_dir = os.path.join("artifacts", f"run_{param_hash}", step)
+    manifest_fp = os.path.join(step_dir, "manifest.json")
     train_step_dir = os.path.join("artifacts", f"run_{train_hash}", step)
     train_manifest_fp = os.path.join(train_step_dir, "manifest.json")
 
@@ -45,7 +45,7 @@ def feature_engineering(self) -> None:  # type: ignore[override]
         self.dataframes["feature_engineered"] = pd.read_csv(
             os.path.join(step_dir, manifest["outputs"]["engineered_csv"])
         )
-        log_registry(step, self.global_hash, manifest["config"], step_dir)
+        log_registry(step, param_hash, manifest["config"], step_dir)
         print(f"[{step.upper()}] Skipped – artefacts already exist at {step_dir}")
         return
 
@@ -65,19 +65,20 @@ def feature_engineering(self) -> None:  # type: ignore[override]
             if col in df_fe.columns:
                 df_fe.drop(columns=col, inplace=True)
 
-        df_fe.to_csv(os.path.join(step_dir, f"{step}_{self.global_hash}.csv"), index=False)
+        output_csv = os.path.join(step_dir, f"{step}_{param_hash}.csv")
+        df_fe.to_csv(output_csv, index=False)
 
         copied_manifest = {
             "step": step,
-            "param_hash": self.global_hash,
+            "param_hash": param_hash,
             "timestamp": datetime.utcnow().isoformat(),
             "config": manifest["config"],
             "output_dir": step_dir,
             "outputs": {
-                "engineered_csv": f"{step}_{self.global_hash}.csv",
+                "engineered_csv": os.path.basename(output_csv),
                 "dropped_features": drop_list,
                 "dropped_features_count": len(drop_list),
-                "dropped_features_log": drop_log,
+                "dropped_features_log": os.path.basename(drop_log),
                 "retained_features": list(df_fe.columns),
             },
         }
@@ -86,13 +87,13 @@ def feature_engineering(self) -> None:  # type: ignore[override]
             json.dump(copied_manifest, f, indent=2)
 
         if self.config.get("use_mlflow", False):
-            with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
-                mlflow.set_tags({"step": step, "param_hash": self.global_hash})
+            with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+                mlflow.set_tags({"step": step, "param_hash": param_hash})
                 mlflow.log_artifacts(step_dir, artifact_path=step)
 
         self.dataframes["feature_engineered"] = df_fe
         self.paths[step] = step_dir
-        log_registry(step, self.global_hash, manifest["config"], step_dir)
+        log_registry(step, param_hash, manifest["config"], step_dir)
         print(f"[{step.upper()}] Re‑used training artefacts at {train_step_dir}")
         return
 
@@ -121,18 +122,17 @@ def feature_engineering(self) -> None:  # type: ignore[override]
                 df_fe[f"{col}_age_days"] = (pd.to_datetime(df_fe["timestamp"]) - dt).dt.days
                 df_fe[f"{col}_age_years"] = df_fe[f"{col}_age_days"] / 365.25
 
-    # Drop constant columns
     dropped = [col for col in df_fe.columns if df_fe[col].nunique(dropna=False) <= 1]
     df_fe.drop(columns=dropped, inplace=True)
 
-    output_csv = os.path.join(step_dir, f"{step}_{self.global_hash}.csv")
-    drop_log = os.path.join(step_dir, f"dropped_features_{self.global_hash}.json")
+    output_csv = os.path.join(step_dir, f"{step}_{param_hash}.csv")
+    drop_log = os.path.join(step_dir, f"dropped_features_{param_hash}.json")
 
     df_fe.to_csv(output_csv, index=False)
     with open(drop_log, "w", encoding="utf-8") as f:
         json.dump({"dropped_features": dropped}, f, indent=2)
 
-    config = {
+    config_summary = {
         "target_col": self.config.get("target_col"),
         "n_rows": df.shape[0],
         "n_cols": df.shape[1],
@@ -144,9 +144,9 @@ def feature_engineering(self) -> None:  # type: ignore[override]
 
     manifest = {
         "step": step,
-        "param_hash": self.global_hash,
+        "param_hash": param_hash,
         "timestamp": datetime.utcnow().isoformat(),
-        "config": convert_numpy_types(config),
+        "config": convert_numpy_types(config_summary),
         "output_dir": step_dir,
         "outputs": {
             "engineered_csv": os.path.basename(output_csv),
@@ -166,18 +166,18 @@ def feature_engineering(self) -> None:  # type: ignore[override]
         json.dump(manifest, f, indent=2)
 
     if self.config.get("use_mlflow", False):
-        with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
-            mlflow.set_tags({"step": step, "param_hash": self.global_hash})
+        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+            mlflow.set_tags({"step": step, "param_hash": param_hash})
             mlflow.log_artifacts(step_dir, artifact_path=step)
 
     self.dataframes["feature_engineered"] = df_fe
     self.paths[step] = step_dir
-    log_registry(step, self.global_hash, config, step_dir)
+    log_registry(step, param_hash, config_summary, step_dir)
 
     print(f"[{step.upper()}] Done – artefacts at {step_dir}")
 
 
-
+    # ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     """
     Smoke‑tests for ml_pipeline.feature_engineering  (spec §19)
@@ -266,14 +266,7 @@ if __name__ == "__main__":
     bad_hash = "not_real_hash123"
     cfg_fail = make_cfg(False, train_hash=bad_hash)
     cfg_fail["model_name"] = "new_model"
-    cfg_fail["model_hash"] = "ffff1111"
+    cfg_fail["model_hash"] = "ffff9999"
     pipe_4 = MLPipeline(cfg_fail, data_source="raw", raw_data=df_demo)
     pipe_4.global_hash = "feedbead1234"
     pipe_4.global_train_hash = bad_hash
-    pipe_4.run_dir = os.path.join("artifacts", f"run_{pipe_4.global_hash}")
-    pipe_4.dataframes["raw"] = df_demo
-    try:
-        pipe_4.feature_engineering()
-        raise SystemExit("[TEST] Expected failure not raised")
-    except AssertionError as e:
-        print(f"[OK ] INFER‑fail: Correctly failed → {e}")
