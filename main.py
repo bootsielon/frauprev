@@ -4,16 +4,35 @@ from cleanup import cleanup_artifacts
 from gen_data import gen_data
 
 def main() -> None:
+    artifact_dirs = [
+        "mlruns",
+        "artifacts",  
+    ]
+    # Path to the generated database
+    db_path = "fraud_poc.db"
+    csv_path = "data/kagglebankfraud/Base.csv"
     configs = [
         {
+            # Step 0
+            "cleanup_artifacts": False,
+            #"db_path": db_path, #"fraud_poc.db",
+            # "gen_data": True,
+            # "n": 10000,
+            "data_source": "csv",
+            "load_data": True,
+            "load_data_path": "data/kagglebankfraud/Base.csv",  # "fraud_poc.db",
+            "csv_path": csv_path,
+
+
+            # Step 1
             "seed": 42,
-            "target_col": "is_fraud",
-            "id_col": "transaction_id",
+            "target_col": "fraud_bool",# "is_fraud",
+            "id_col": "account_id",  # "transaction_id",
             "use_mlflow": True,
             
-            "train_size": 0.6,
-            "test_size": 0.3,
-            "val_size": 0.1,
+            "train_size": 0.7,
+            "test_size": 0.15,
+            "val_size": 0.15,
             "use_stratification": False,
             "use_downsampling": True,
             # "stratify_cols": ["client_id", "merchant_id"],
@@ -59,31 +78,28 @@ def main() -> None:
         param_hash = make_param_hash(cfg)
         print(f"\n=== Running pipeline for hash: {param_hash} ===")
         pipeline = MLPipeline(cfg)
+
+        if cfg["cleanup_artifacts"]:
+            # Clean up artifacts and database
+            cleanup_artifacts(artifact_dirs, db_path)
+        if not cfg["load_data"]:
+            # Generate new data
+            gen_data(n=10000, random_seed=402)
+        else:
+            # Load data from the specified path
+            print(f"Loading data from {cfg['load_data_path']}")
+            # Here you would load your data into the pipeline or set it up as needed
+            # For example, you might want to load a DataFrame or a database connection
+
+            # data = load_data(cfg['load_data_path'])
+            #pipeline.set_data(data)
+            pipeline.load_data()
+
+        
+    
         pipeline.run_all()
 
 
 if __name__ == "__main__":
     # List of artifact directories to clean
-    artifact_dirs = [
-        "mlruns",
-        "artifacts",
-        "artifacts/eda",
-        "artifacts/step1",
-        "artifacts/step2",
-        "artifacts/step3",
-        "artifacts/step4",
-        "artifacts/step5",
-        "artifacts/step6",
-        "artifacts/step7",
-        "artifacts/step8",
-        "artifacts/step9",
-        "artifacts/step10",
-        "artifacts/step11",
-        "artifacts/step12",    
-    ]
-    # Path to the generated database
-    db_path = "fraud_poc.db"
-    cleanup_artifacts(artifact_dirs, db_path)
-    # Generate new data
-    gen_data(n=10000, random_seed=402)
     main()

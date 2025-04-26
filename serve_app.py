@@ -71,8 +71,8 @@ def build_inference_cfg(run_hash: str, feature_names: list[str]) -> dict:
         "model_hash": "deployed_baseline",
         "dataset_name": "uploaded_ds",
         "feature_names": feature_names or ["dummy"],
-        "target_col": "is_fraud",
-        "id_col": "transaction_id",
+        "target_col": "fraud_bool",  # "is_fraud",
+        "id_col": "account_id",  # "transaction_id",
         "use_mlflow": False,
     }
 
@@ -139,7 +139,7 @@ def main() -> None:
 
         st.success("Done!")
         st.dataframe(scored_df.head(), use_container_width=True)
-
+        
         # 4️⃣  Download
         st.header("4. Download results")
         st.download_button(

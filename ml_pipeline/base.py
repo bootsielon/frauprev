@@ -48,10 +48,10 @@ class MLPipeline:
         self,
         config      : dict[str, Any],
         *,
-        data_source : str               = "sqlite",
+        data_source : str               = "csv",  # "sqlite", "xlsx", "raw"
         db_path     : str               = "fraud_poc.db",
         xlsx_path   : str | None        = None,
-        csv_paths   : dict | None       = None,
+        csv_path    : str | None        = None,
         raw_data    : pd.DataFrame | None = None,
     ) -> None:
         # ------------------------------------------------ core config --
@@ -60,10 +60,10 @@ class MLPipeline:
         self.config["train_mode"] = self.train_mode  # echo back
 
         # ------------------------------------------------ data handles -
-        self.data_source    = data_source
-        self.db_path        = db_path
-        self.xlsx_path      = xlsx_path
-        self.csv_paths      = csv_paths
+        self.data_source    = self.config.get("data_source")  # data_source
+        self.db_path        = self.config.get("db_path")
+        self.xlsx_path      = self.config.get("xlsx_path")  # updated to use config
+        self.csv_path       = self.config.get("csv_path")   # updated to use config
         self.raw_data       = raw_data
 
         # ------------------------------------------------ bookkeeping --
@@ -80,7 +80,7 @@ class MLPipeline:
                 "data_source": data_source,
                 "db_path"    : db_path,
                 "xlsx_path"  : xlsx_path,
-                "csv_paths"  : csv_paths,
+                "csv_path"  : csv_path,
             }
             self.global_hash = make_param_hash(full_config)
             self.global_train_hash = self.global_hash
@@ -137,33 +137,44 @@ class MLPipeline:
                 raise ValueError("raw_data=None while data_source='raw'")
             return self.raw_data.copy()
 
-        if self.data_source == "sqlite":
-            import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            df_clients   = pd.read_sql("SELECT * FROM clients"      , conn)
-            df_merchants = pd.read_sql("SELECT * FROM merchants"    , conn)
-            df_tx        = pd.read_sql("SELECT * FROM transactions" , conn)
-            conn.close()
-        elif self.data_source == "xlsx":
-            xls          = pd.ExcelFile(self.xlsx_path)
-            df_clients   = pd.read_excel(xls, sheet_name="clients")
-            df_merchants = pd.read_excel(xls, sheet_name="merchants")
-            df_tx        = pd.read_excel(xls, sheet_name="transactions")
+        df_clients   = pd.DataFrame()
+        df_merchants = pd.DataFrame()
+        df = pd.DataFrame()
+        conn = None
+
+        if self.data_source == "sqlite" or self.data_source == "xlsx":
+            if self.data_source == "sqlite":
+                import sqlite3
+                conn = sqlite3.connect(self.db_path)
+                df_clients   = pd.read_sql("SELECT * FROM clients"      , conn)
+                df_merchants = pd.read_sql("SELECT * FROM merchants"    , conn)
+                df           = pd.read_sql("SELECT * FROM transactions" , conn)
+            elif self.data_source == "xlsx":
+                xls          = pd.ExcelFile(self.xlsx_path)
+                df_clients   = pd.read_excel(xls, sheet_name="clients")
+                df_merchants = pd.read_excel(xls, sheet_name="merchants")
+                df           = pd.read_excel(xls, sheet_name="transactions")
+
+            df_clients   = df_clients.rename(columns={"account_creation_date": "account_creation_date_client"})
+            df_merchants = df_merchants.rename(columns={"account_creation_date": "account_creation_date_merchant"})
+            df = df.merge(df_clients , on="client_id",   how="left")
+            df = df.merge(df_merchants, on="merchant_id", how="left")
+            
         elif self.data_source == "csv":
-            df_clients   = pd.read_csv(self.csv_paths["clients"])
-            df_merchants = pd.read_csv(self.csv_paths["merchants"])
-            df_tx        = pd.read_csv(self.csv_paths["transactions"])
+            # df_clients   = pd.read_csv(self.csv_path["clients"])
+            # df_merchants = pd.read_csv(self.csv_path["merchants"])
+            # df_tx        = pd.read_csv(self.csv_path["transactions"])
+            df = pd.read_csv(self.csv_path)
         else:
-            raise ValueError(f"Unknown data_source: {self.data_source}")
+            raise ValueError(f"Unknown data_source: {self.csv_path}")
 
         # unify column names
-        df_clients   = df_clients.rename(columns={"account_creation_date": "account_creation_date_client"})
-        df_merchants = df_merchants.rename(columns={"account_creation_date": "account_creation_date_merchant"})
-
+        if self.data_source == "sqlite":
+                    conn.close()
         return (
-            df_tx
-            .merge(df_clients , on="client_id",   how="left")
-            .merge(df_merchants, on="merchant_id", how="left")
+
+
+            df
         )
 
     # ──────────────────────────────────────────────────────────────────
@@ -224,10 +235,15 @@ if __name__ == "__main__":
     """
 
     import os
-    import shutil
+    # import shutil
     import traceback
     import pandas as pd
 
+    source = "csv" # if pipe_train.train_mode else "xlsx"
+
+    csv_test_path = "data/kagglebankfraud/Variant I.csv"
+    csv_file_path = "data/kagglebankfraud/Base.csv"  # "fraud_poc.db",
+    # csv_file_path = "data/kagglebankfraud/Variant II.csv"  # "fraud_poc.db",
     # ------------------------------------------------------------------
     # Shared constant hash (spec §17)
     # ------------------------------------------------------------------
@@ -269,6 +285,7 @@ if __name__ == "__main__":
         "feature_names": ["amount", "timestamp"],
         "global_hash": DEFAULT_TEST_HASH,  # will be overridden
     }
+    #pipe_train = MLPipeline(train_cfg, data_source="raw", raw_data=df_demo)
     pipe_train = MLPipeline(train_cfg, data_source="raw", raw_data=df_demo)
 
     safe("TRAIN‑v1: load_data()", lambda: pipe_train._load_data())
@@ -293,7 +310,12 @@ if __name__ == "__main__":
         "dataset_name": "demo_ds",
         "feature_names": ["timestamp", "amount"],
         "inference_extra": {},
+        "csv_path": "data/kagglebankfraud/Variant I.csv",  # "fraud_poc.db",
+        
     }
+
+    
+
     pipe_infer = MLPipeline(infer_cfg, data_source="raw", raw_data=df_demo)
     assert (
         pipe_infer.global_train_hash == TRAIN_HASH

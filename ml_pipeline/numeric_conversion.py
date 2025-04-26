@@ -182,7 +182,8 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
             # potential ID‑like or drop
             if id_like_exempt:
                 log_ratio = np.log10(dataset_size) / np.log10(max(cardinality, 2))
-                if 1 <= log_ratio <= c3:
+                if 1 <= log_ratio <= c3 or col == cfg["id_col"]:
+                    # ID‑like column – exempt from grouping
                     id_like_columns.append(col)
                     grouping_map[col] = {"strategy": "id_like_exempt"}
                     dropped.append(col)

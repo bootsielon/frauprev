@@ -14,7 +14,7 @@ from datetime import datetime
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import mlflow
-from ml_pipeline.utils import make_param_hash, log_registry, DEFAULT_TEST_HASH  # already lives in utils.py
+from ml_pipeline.utils import log_registry, DEFAULT_TEST_HASH  # already lives in utils.py
 
 
 # --------------------------------------------------------------------------- #
@@ -177,50 +177,69 @@ def perform_data_splits(
 
 
 def save_outputs(df_train, df_val, df_test, df_excluded,
-                  id_col, stratify_keys, step_dir, param_hash):
+                  id_col, stratify_keys, step_dir, train_mode):
     """Save all partition outputs to files (hash omitted from filenames per SPEC§25)."""
-    df_train.to_csv(os.path.join(step_dir, "train.csv"), index=False)
-    df_val.to_csv(os.path.join(step_dir, "val.csv"), index=False)
     df_test.to_csv(os.path.join(step_dir, "test.csv"), index=False)
-    df_excluded.to_csv(os.path.join(step_dir, "excluded_majority.csv"), index=False)
+    if train_mode:
+        df_train.to_csv(os.path.join(step_dir, "train.csv"), index=False)
+        df_val.to_csv(os.path.join(step_dir, "val.csv"), index=False)
+        if df_excluded:
+            df_excluded.to_csv(os.path.join(step_dir, "excluded_majority.csv"), index=False)
 
     id_map = {
-        "train": df_train[id_col].tolist(),
-        "val": df_val[id_col].tolist(),
         "test": df_test[id_col].tolist(),
-        "excluded_majority": df_excluded[id_col].tolist()
     }
-    with open(os.path.join(step_dir, "id_partition_map.json"), "w") as f:
-        json.dump(id_map, f, indent=2)
+    if train_mode:
+        id_map.update({
+            "train": df_train[id_col].tolist(),
+            "val": df_val[id_col].tolist(),
+            "excluded_majority": df_excluded[id_col].tolist()
+        })
+    
+        with open(os.path.join(step_dir, "id_partition_map.json"), "w") as f:
+            json.dump(id_map, f, indent=2)
 
-    stratify_keys.to_csv(os.path.join(step_dir, "stratify_keys.csv"), index=False)
+        stratify_keys.to_csv(os.path.join(step_dir, "stratify_keys.csv"), index=False)  # stratify_keys.to_json(os.path.join(step_dir, "stratify_keys.json"), orient="records", lines=True)  # Save the stratification keys as a JSON file
 
 
 def create_manifest(step, param_hash, config, step_dir):
     """Create and save the manifest file."""
+    outputs = None
+    
+    
+    outputs = {"test_csv": "test.csv",}
+
+    if config["train_mode"]:
+        outputs.update({
+            "train_csv": "train.csv",
+            "val_csv": "val.csv",
+            "excluded_majority_csv": "excluded_majority.csv",
+            "id_partition_map_json": "id_partition_map.json",
+            "stratify_keys_csv": "stratify_keys.csv"
+        })
+
     manifest = {
         "step": step,
         "param_hash": param_hash,
         "timestamp": datetime.utcnow().isoformat(),
         "config": config,
         "output_dir": step_dir,
-        "outputs": {
-            "train_csv": "train.csv",
-            "val_csv": "val.csv",
-            "test_csv": "test.csv",
-            "excluded_majority_csv": "excluded_majority.csv",
-            "id_partition_map_json": "id_partition_map.json",
-            "stratify_keys_csv": "stratify_keys.csv"
-        }
+        "training_mode": config["train_mode"],
+        "outputs": outputs
     }
     with open(os.path.join(step_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
 
 
-def load_checkpoint(step_dir, param_hash, step):
+def load_checkpoint(step_dir, train_mode):
     """Load data from existing checkpoint (filenames hash‑free)."""
     dataframes = {}
-    for split in ["train", "val", "test", "excluded_majority"]:
+
+    mode_datasets = ["test"]
+    if train_mode:
+        mode_datasets += ["train", "val", "excluded_majority"]
+
+    for split in mode_datasets:
         path = os.path.join(step_dir, f"{split}.csv")
         if os.path.exists(path):
             dataframes[split] = pd.read_csv(path)
@@ -238,6 +257,60 @@ def partitioning(self) -> None:
     param_hash = self.global_hash
     step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
     manifest   = os.path.join(step_dir, "manifest.json")
+    os.makedirs(step_dir, exist_ok=True)
+
+    # ----------------------------------------------------------------
+    # 0  Inference mode → load built artefacts NOT from TRAINING run
+    # ----------------------------------------------------------------
+    if not self.train_mode:
+        # step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
+        inf_manif = os.path.join(step_dir, "manifest.json")
+        if os.path.exists(inf_manif):
+            print(f"[{step.upper()}] Reusing artefacts from {step_dir}")
+            self.paths[step] = step_dir
+            self.dataframes.update(load_checkpoint(step_dir, self.train_mode))  #self.global_hash, step
+            return
+        else:
+            # ‑‑‑ nothing to reuse → raise, as required by SPEC §5
+            #raise FileNotFoundError(
+                #f"[{step.upper()}] Expected training artefacts at {step_dir} but none found."
+            #)
+
+            save_outputs(
+                df_test=self.dataframes["feature_engineered"], # df_train, df_val,  df_excluded, 
+                id_col=self.config["id_col"], # self.dataframes["stratification_keys"], 
+                step_dir=step_dir,  # , param_hash=param_hash
+                df_train=None, 
+                df_val=None, 
+                df_excluded=None, 
+                stratify_keys=None,
+                train_mode=self.train_mode
+            )
+
+            create_manifest(step, param_hash, self.config, step_dir)
+
+            if self.config.get("use_mlflow", False):
+                with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+                    mlflow.set_tags({"step": step, "param_hash": param_hash})
+                    mlflow.log_artifacts(step_dir, artifact_path=step)
+
+            log_registry(step, self.global_hash, self.config, step_dir)  # SPEC§7
+
+            self.dataframes.update({
+                "test": self.dataframes["feature_engineered"],  # self.dataframes["test"],
+                #"train": self.dataframes["train"],
+                #"val": self.dataframes["val"],
+                #"excluded": self.dataframes["excluded"]
+                
+            })
+            print(f"[{step.upper()}] Partitioning step in inference mode does nothing. Data saved to {step_dir}")
+            print(f"[{step.upper()}] Inference records: {len(self.dataframes['test'])}")
+            # print(f"[{step.upper()}] Excluded samples: {len(df_excluded)}")
+            print(f"[{step.upper()}] Total records processed: "
+                f"{len(self.dataframes['test'])}")
+
+            self.paths[step] = step_dir
+
 
     # ----------------------------------------------------------------
     # 1️⃣  Skip‑guard – artefacts already in *current* run folder
@@ -245,24 +318,10 @@ def partitioning(self) -> None:
     if os.path.exists(manifest):
         print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
         self.paths[step] = step_dir
-        self.dataframes.update(load_checkpoint(step_dir, param_hash, step))
+        self.dataframes.update(load_checkpoint(step_dir, self.train_mode))  #self.global_hash, step
+        # removed: self.hashes no longer used.  # SPEC§3
         return
 
-    # ----------------------------------------------------------------
-    # 2️⃣  Inference mode → load artefacts from TRAINING run
-    # ----------------------------------------------------------------
-    if not self.train_mode:
-        train_dir   = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
-        train_manif = os.path.join(train_dir, "manifest.json")
-        if os.path.exists(train_manif):
-            print(f"[{step.upper()}] Reusing artefacts from {train_dir}")
-            self.paths[step] = train_dir
-            self.dataframes.update(load_checkpoint(train_dir, self.global_train_hash, step))
-            return
-        # ‑‑‑ nothing to reuse → raise, as required by SPEC §5
-        raise FileNotFoundError(
-            f"[{step.upper()}] Expected training artefacts at {train_dir} but none found."
-        )
 
     # ----------------------------------------------------------------
     # 3️⃣  Training mode – continue with normal computation
@@ -290,11 +349,11 @@ def partitioning(self) -> None:
         print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
         self.paths[step] = step_dir
         # removed: self.hashes no longer used.  # SPEC§3
-        checkpoint_data = load_checkpoint(step_dir, param_hash, step)
+        checkpoint_data = load_checkpoint(step_dir, self.train_mode)  # self.global_hash, step
         self.dataframes.update(checkpoint_data)
         return
 
-    os.makedirs(step_dir, exist_ok=True)
+    # os.makedirs(step_dir, exist_ok=True)
 
     stratify_cols = identify_stratification_columns(
         df, target, use_stratification, self.config["stratify_cardinality_threshold"]
@@ -340,7 +399,7 @@ def partitioning(self) -> None:
     save_outputs(
         df_train, df_val, df_test, df_excluded, 
         id_col, self.dataframes["stratification_keys"], 
-        step_dir, param_hash
+        step_dir  # , param_hash
     )
     
     create_manifest(step, param_hash, self.config, step_dir)
