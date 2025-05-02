@@ -94,9 +94,6 @@ def main() -> None:
             # data = load_data(cfg['load_data_path'])
             #pipeline.set_data(data)
             pipeline.load_data()
-
-        
-    
         pipeline.run_all()
 
 

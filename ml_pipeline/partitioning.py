@@ -10,7 +10,7 @@
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import mlflow
@@ -183,7 +183,7 @@ def save_outputs(df_train, df_val, df_test, df_excluded,
     if train_mode:
         df_train.to_csv(os.path.join(step_dir, "train.csv"), index=False)
         df_val.to_csv(os.path.join(step_dir, "val.csv"), index=False)
-        if df_excluded:
+        if df_excluded is not None:
             df_excluded.to_csv(os.path.join(step_dir, "excluded_majority.csv"), index=False)
 
     id_map = {
@@ -206,7 +206,6 @@ def create_manifest(step, param_hash, config, step_dir):
     """Create and save the manifest file."""
     outputs = None
     
-    
     outputs = {"test_csv": "test.csv",}
 
     if config["train_mode"]:
@@ -221,7 +220,7 @@ def create_manifest(step, param_hash, config, step_dir):
     manifest = {
         "step": step,
         "param_hash": param_hash,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "config": config,
         "output_dir": step_dir,
         "training_mode": config["train_mode"],
@@ -277,7 +276,7 @@ def partitioning(self) -> None:
             #)
 
             save_outputs(
-                df_test=self.dataframes["feature_engineered"], # df_train, df_val,  df_excluded, 
+                df_test=self.dataframes["feature_engineered"], # df_train, df_val,  df_excluded,
                 id_col=self.config["id_col"], # self.dataframes["stratification_keys"], 
                 step_dir=step_dir,  # , param_hash=param_hash
                 df_train=None, 
@@ -354,7 +353,6 @@ def partitioning(self) -> None:
         return
 
     # os.makedirs(step_dir, exist_ok=True)
-
     stratify_cols = identify_stratification_columns(
         df, target, use_stratification, self.config["stratify_cardinality_threshold"]
     )
@@ -397,9 +395,9 @@ def partitioning(self) -> None:
     )
     
     save_outputs(
-        df_train, df_val, df_test, df_excluded, 
-        id_col, self.dataframes["stratification_keys"], 
-        step_dir  # , param_hash
+        df_train=df_train, df_val=df_val, df_test=df_test, df_excluded=df_excluded, 
+        id_col=id_col, stratify_keys=self.dataframes["stratification_keys"], 
+        step_dir=step_dir, train_mode=self.train_mode  # , param_hash
     )
     
     create_manifest(step, param_hash, self.config, step_dir)

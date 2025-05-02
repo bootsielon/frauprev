@@ -73,6 +73,7 @@ class MLPipeline:
         self.metrics   : dict[str, dict]         = {}
         self.artifacts : dict[str, dict]         = {}
         self.transformations: dict[str, dict]    = {}
+        self.metadata  : dict[str, Any]            = {}
         # ------------------------------------------------ run hash -----
         if self.train_mode:
             full_config = {
@@ -94,6 +95,14 @@ class MLPipeline:
             )
             self.global_hash = make_param_hash(key_tuple)
             self.global_train_hash = self.config["train_hash"]
+            # self.dataframes: dict[str, pd.DataFrame] = {}
+            self.train_paths     : dict[str, str]          = {}
+            self.train_models    : dict[str, object]       = {}
+            # self.train_metrics   : dict[str, dict]         = {}
+            self.train_artifacts : dict[str, dict]         = {}
+            self.train_transformations: dict[str, dict]    = {}
+            self.train_manifest  : dict[str, Any]            = {}
+            self.train_metadata  : dict[str, Any]            = {}
 
         # expose hashes
         self.config["global_hash"]       = self.global_hash
@@ -103,14 +112,15 @@ class MLPipeline:
         self.run_dir = os.path.join("artifacts", f"run_{self.global_hash}")
         first_time = not os.path.exists(self.run_dir)
         os.makedirs(self.run_dir, exist_ok=True)
-
+        self.train_dir = os.path.join("artifacts", f"run_{self.global_train_hash}")
+        os.makedirs(self.train_dir, exist_ok=True)
         if first_time:  # write human timestamp (not hashed)
             with open(os.path.join(self.run_dir, "created_at.txt"), "w") as fh:
                 from datetime import datetime, timezone
                 fh.write(datetime.now(timezone.utc).isoformat())
 
         # ------------------------------------------------ bind steps ---
-        self.load_data                = self._load_data
+        self.load_data                 = self._load_data
         self.eda                       = lambda: eda(self)
         self.feature_engineering       = lambda: feature_engineering(self)
         self.partitioning              = lambda: partitioning(self)
