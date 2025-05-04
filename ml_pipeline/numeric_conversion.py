@@ -91,7 +91,7 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
             train_manifest = json.load(open(train_manifest_dir, "r"))
             print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
             self.train_paths[step] = train_step_dir
-            self.global_train_hash = train_manifest.get("global_hash")
+            # self.global_train_hash = train_manifest.get("global_hash")
             self.train_manifest[step] = train_manifest
             self.train_models[step] = {}
             self.train_artifacts[step] = train_manifest.get("artifacts", {})
