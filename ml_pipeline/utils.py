@@ -19,7 +19,8 @@ import hashlib
 import os
 from datetime import datetime, timezone
 from typing import Any
-
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import sqlite3
