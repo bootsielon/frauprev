@@ -17,6 +17,26 @@ ARTIFACTS_ROOT = Path("artifacts")
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
+import streamlit as st
+
+def check_password():
+    def password_entered():
+        if st.session_state["password"] == "demo123":
+            st.session_state["authenticated"] = True
+        else:
+            st.session_state["authenticated"] = False
+            st.error("❌ Incorrect password")
+
+    if "authenticated" not in st.session_state:
+        st.text_input("Enter password", type="password", on_change=password_entered, key="password")
+        st.stop()
+    elif not st.session_state["authenticated"]:
+        st.text_input("Enter password", type="password", on_change=password_entered, key="password")
+        st.stop()
+
+
+
+
 def discover_trained_runs(root: Path) -> List[str]:
     """
     Return all run‑hashes that contain a trained baseline model.
@@ -151,4 +171,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    check_password()
     main()
+    

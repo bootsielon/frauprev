@@ -1,0 +1,264 @@
+SPEC
+
+0. Headers  
+• Each assistant message ends with a ✅Compliance checklist – per‑item notes explaining how the current reply complies with or does not touch each rule.  
+• No content is required at the beginning of the message.
+
+1. Global hash (self.global_hash)  
+• Exactly one per process/run.  
+• All artefacts for the current run live in  
+artifacts/run_<self.global_hash>/<step_name>/ (no hashes in any filename unless necessary – see §73).
+
+
+1A. Hash-generation rules (deterministic, no timestamps)  
+
+• Reproducible: identical inputs ⇒ identical hash.  
+• Absolutely NO timestamp/UUID/entropy.  
+• A human-readable created_at.txt may be written alongside artefacts—never used in hash generation.  
+
+Training (self.train_mode=True):  
+self.global_hash = make_param_hash(full_config)
+  
+Inference (self.train_mode=False):  
+
+key_tuple = (
+model_name,
+model_hash,
+dataset_name,
+tuple(sorted(feature_names)),
+extra_inference_settings
+)
+
+self.global_hash = make_param_hash(key_tuple)
+
+make_param_hash(obj)= first12hex chars of SHA-256 over, but it's fixed for smoke tests (say, '100000000001' for the run folder used for all smoke test artifacts)
+
+json.dumps(obj, sort_keys=True, default=str).
+
+
+2. Per‑step hashes❌  
+• Do not generate, embed, or store hashes at the step level.
+3. Book‑keeping objects  
+• self.paths→ directory for each step (global‑hash path).  
+• self.artifacts→ manifest‑style dict per step.  
+• self.hashes is removed  ; comment legacy calls with  
+# removed: self.hashes no longer used.
+4. Training‑run hash (self.global_train_hash)  
+python
+if self.train_mode:  # training
+self.global_train_hash = self.global_hash
+else:  # inference
+self.global_train_hash = self.config["train_hash"]
+  
+Inference loads artefacts from  
+artifacts/run_<self.global_train_hash>/<step_name>/.
+5. train_mode logic  
+Training:  
+• Run full computation; write outputs (engineered.csv, dropped_features.json, manifest.json, etc.).
+Inference:  
+1. Reuse artefact if it already exists in the inference run  .  
+2. Else load it from the training run (self.global_train_hash).  
+3. Else raise a clear error.  
+• Never recompute from raw during inference.  
+• Never overwrite training artefacts.
+
+6. MLflow
+• Always active in train and inference.  
+• Log the entire step directory as a single artefact.
+
+7. log_registry  
+Call signature: log_registry(step, self.global_hash, …).
+
+8. Code‑change etiquette  
+• Work on one file at a time  —the user supplies the file.  
+• Touch only lines required for spec compliance.  
+• Comment‑out, never delete, any removed/changed line.  
+• Every .py file must contain a functional if __name__ == "__main__": block:  
+– Never delete or shorten an existing smoke test.  
+– Append new checks; keep originals intact.  
+– python <file>.py must run without error.
+
+---
+
+9. Randomness discipline  
+• All random seeds live in the config.  
+• No hidden RNG calls.
+
+---
+
+10. Function-name continuity  
+• Do not silently replace public functions.  
+• If refactoring is required, rename the old implementation (e.g., old_<name> or <name>_deprecated) and keep the public interface.
+
+---
+
+11. Imports  
+• Always use absolute imports inside the project—never relative (from .foo import …).
+
+---
+
+12. Hash helper naming  
+• The deterministic helper is make_param_hash  .
+
+---
+
+13. Docstrings & type hints  
+• Never delete existing ones.  
+• Update/add them whenever behaviour changes.
+
+---
+
+14. Skip‑guard positioning & purpose  
+python
+if os.path.exists(manifest_fp):
+load_and_return()
+  
+Must appear before any compute logic to avoid recomputation and accidental overwrites.
+
+---
+
+15. Change‑delivery rules  
+a. Return the full, self‑contained replacement file inside a fenced code block.  
+b. Include a “What changed & why” section.  
+c. Provide a unified diff only when explicitly requested.  
+d. Introduce no new classes/functions/flags unless explicitly asked.
+
+---
+
+16. Reply content  
+• Detail is welcome—do not sacrifice correctness for brevity.  
+• Never omit essential logic.  
+• No unsolicited features beyond what the spec requires.
+
+---
+
+17. Shared test hash for smoke tests  
+• Define a constant (e.g., DEFAULT_TEST_HASH) used across all __main__ blocks so artefacts chain cleanly.
+
+---
+
+18. Avoid trivial examples in smoke tests  
+• Tests must exercise:  
+– Multi‑row, multi‑type inputs.  
+– Missing values.  
+– Invalid config scenarios.
+
+---
+
+19. __main__ blocks must test:  
+• Training with no pre‑existing artefacts (fresh run).  
+• Training with artefacts (verifies skip‑guard).  
+• Inference with required artefacts.  
+• Inference without artefacts (must fail clearly).
+
+---
+
+20. Migration to test files  
+• __main__ smoke tests serve as the interim test suite.  
+• They will be migrated to formal tests/ modules in the next phase.
+
+---
+
+21. Separate delivery of __main__ blocks  
+• When you modify a file, deliver:  
+1. One message containing the file body without the __main__ block.  
+2. A follow‑up message containing only the __main__ block.
+
+---
+
+22. Optional shared test helpers  
+• Common logic (e.g., loading configs, asserting errors, shared hash) may live in utils.py for now.  
+• They will move to test_helpers.py later.
+
+---
+
+23. Additional runtime checks (time‑permitting)  
+• Per‑run audit report (steps completed, paths used).  
+• Artefact validation (existence & schema).  
+• config.json snapshot saved per step.  
+• hash.txt echo file in run_<hash>/.
+
+---
+
+24. Smoke‑test dependency discipline  
+a. Prefer self‑contained smoke tests—able to run with only standard library plus the file under test.  
+b. If self‑containment is impractical, a smoke test may import or invoke only those pipeline steps that have already been implemented and validated  .  
+– Never depend on steps scheduled for future implementation; otherwise, the current file cannot be verified in isolation.  
+c. All smoke tests must honor the shared DEFAULT_TEST_HASH (spec§17) so artefacts generated by earlier‑step tests are reusable by later‑step tests executed sequentially.
+
+0. Headers  
+• Each assistant message ends with a ✅Compliance checklist – per‑item notes explaining how the current reply complies or does not touch each rule.
+
+
+
+25. File Naming Discipline  
+• All outputs must be stored in a folder named with the hash:  
+artifacts/<step_name>/<step_name>_<param_hash>/  
+• Structured files (e.g., .json, .yaml) must include "param_hash" inside their content.  
+• Unstructured files (e.g., .csv, .png) must not include the hash in their filename if the enclosing folder already includes the hash.  
+• Only include the hash in filenames if:
+– The file may be viewed or used outside its folder  
+– Or the folder does not include the hash  
+
+26. Print Statements and Comment Retention  
+• Never remove or alter print statements unless they are provably redundant or explicitly overridden.  
+• Print statements are treated as user-facing output and must be preserved verbatim.  
+• Do not delete comments near print statements unless they merely restate that the line is a print.  
+• If a comment adds nuance, rationale, or context, it must be kept.
+
+
+27. Intent Respect  
+• Assume all filenames, comments, and print statements are intentional unless they clearly violate spec or correctness.  
+• Do not rename, reword, or delete existing lines of this kind unless explicitly told to, or unless needed for spec enforcement.
+
+Excellent updates — here's the refined **SPEC Addendum** with your two new clarifications incorporated:
+
+---
+
+## 📜 SPEC Addendum: Strict Intent Preservation and Integrated Run Continuity
+
+### ✅ 28. Explicit Modification Protocol
+Before **any** structural code change (e.g., refactor, rename, removal):
+i. State **which SPEC rule mandates the change**
+ii. Show **minimal diff** or patch proposal
+iii. Wait for **explicit user approval**
+
+
+
+### 🔒 29. Preserve Modularity and Structure
+- **Do not collapse, inline, or refactor helper functions**, even if small or seemingly redundant.
+- **Preserve all original code structure**, function boundaries, and control flow, unless SPEC violations demand otherwise.
+- Never reorder, deduplicate, or optimize code blocks unless explicitly approved.
+
+### 🧯 30. No Unsolicited Changes — Except With Approval
+- **Do not simplify, optimize, or “clean up” code** without user permission.
+- **Improvements may be proposed** if they **add functionality** (e.g., new features, hooks, toggles), but must:
+  - Be clearly marked as suggestions
+  - Not remove or flatten existing functionality
+  - Be approved before implementation
+
+### ✍️ 31. Comments, Docstrings, and Style
+- **Preserve all existing comments and docstrings**, including inline and block comments.
+- Only add/update docstrings if missing and required by SPEC §13.
+- Never remove a comment unless it is provably incorrect due to a SPEC-required fix or explicitly marked as redundant by the user.
+
+### 📂 32. Skip‑guard Discipline
+- When enforcing SPEC §14 (skip‑guard first), only move or gate the **minimum required logic**.
+- Do **not** restructure entire functions to satisfy skip‑guard unless absolutely necessary.
+
+### 🔁 33. Hash & Artifact Pathing
+- All outputs must go to `artifacts/run_<hash>/<step>/` (SPEC §1).
+- **Do not delete or overwrite** contents of `run_<hash>/` folders when executing a new step.
+  - Steps must only write to their own `<step>/` subfolder.
+  - Other subfolders and files in `run_<hash>/` must remain untouched.
+- This enables full pipeline validation across steps using shared state and common hashes.
+
+### 🧪 34. Smoke Tests
+- `__main__` blocks must test full scenarios without breaking continuity across steps.
+- All smoke tests must set and respect `DEFAULT_TEST_HASH` (SPEC §17).
+- If an existing test block exists, do **not** replace it without user approval.
+
+### 🧷 35. Frozen by Default
+- If unsure whether a change is allowed, **do nothing** and ask first.
+- Do **not** assume silent permission to restructure or "improve" logic.
+
