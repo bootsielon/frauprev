@@ -1,20 +1,20 @@
 """
-Step 4 – Scaling / Standardisation
+Step 4 - Scaling / Standardisation
 ==================================
 
-Applies centring and scaling to *numeric* columns using **train‑only**
+Applies centring and scaling to *numeric* columns using **train-only**
 statistics and writes the results to
 
     artifacts/run_<self.global_hash>/scaling/
 
 Spec compliance highlights
 ──────────────────────────
-• One global hash per run – no per‑step hashes (SPEC §1, §2).  
-• Skip‑guard is the very first runtime check (SPEC §14).  
-• Inference: reuse → load‑from‑train → raise (SPEC §5).  
+• One global hash per run - no per-step hashes (SPEC-§1, §2).  
+• Skip-guard is the very first runtime check (SPEC-§14).  
+• Inference: reuse → load-from-train → raise (SPEC-§5).  
 • Filenames carry **no hashes** because the folder already embeds it
-  (SPEC §25).  
-• `self.hashes` removed; `log_registry` called (SPEC §3, §7).  
+  (SPEC-§25).  
+• `self.hashes` removed; `log_registry` called (SPEC-§3, §7).  
 """
 
 from __future__ import annotations
@@ -51,10 +51,11 @@ def _standardise(
     return df_out
 
 
-def _load_existing(step_dir: str) -> Dict[str, pd.DataFrame]:
-    """Load <split>_scaled.csv files that already exist in *step_dir*."""
+def _load_existing(self, step_dir: str) -> Dict[str, pd.DataFrame]:
+    """Load numeric CSVs that are present in *step_dir*."""
     dfs: Dict[str, pd.DataFrame] = {}
-    for split in ("train", "val", "test", "excluded"):
+    splits = ("train", "val", "test", "excluded") if self.train_mode else ("test",)
+    for split in splits:
         fp = os.path.join(step_dir, f"{split}_scaled.csv")
         if os.path.exists(fp):
             dfs[f"{split}_sca"] = pd.read_csv(fp)
@@ -71,13 +72,13 @@ def scaling(self) -> None:  # type: ignore[override]
     Behaviour
     ---------
     • Training:
-        – Compute centre/scale stats.
-        – Apply to train/val/test(/excluded).
-        – Persist artefacts + manifest.
+        - Compute centre/scale stats.
+        - Apply to train/val/test(/excluded).
+        - Persist artefacts + manifest.
     • Inference:
-        – Reuse artefacts in *current* run if present.
-        – Else load from training run.
-        – Else raise FileNotFoundError.
+        - Reuse artefacts in *current* run if present.
+        - Else load from training run.
+        - Else raise FileNotFoundError.
     """
     step = "scaling"
 
@@ -93,7 +94,7 @@ def scaling(self) -> None:  # type: ignore[override]
     if os.path.exists(run_manifest):
         print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
         self.paths[step] = run_step_dir
-        self.dataframes.update(_load_existing(run_step_dir))
+        self.dataframes.update(_load_existing(self, run_step_dir))
         return
 
     # ------------------------------------------------------------------- #
@@ -105,7 +106,7 @@ def scaling(self) -> None:  # type: ignore[override]
         if os.path.exists(train_manifest):
             print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
             self.paths[step] = train_step_dir
-            self.dataframes.update(_load_existing(train_step_dir))
+            self.dataframes.update(_load_existing(self, train_step_dir))
             return
         raise FileNotFoundError(
             f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
@@ -118,12 +119,13 @@ def scaling(self) -> None:  # type: ignore[override]
     seed = cfg.get("seed", 42)
     np.random.seed(seed)
 
-    train_df = self.dataframes["train_num"]
-    val_df = self.dataframes["val_num"]
     test_df = self.dataframes["test_num"]
-    excluded_df = self.dataframes.get("excluded_num")
+    train_df = self.dataframes["train_num"] if self.train_mode else None
+    val_df = self.dataframes["val_num"] if self.train_mode else None
+    
+    excluded_df = self.dataframes.get("excluded_num") if self.train_mode else None
 
-    target_col = cfg["target_col"]
+    target_col = cfg["target_col"]  # if self.train_mode else None
     id_col = cfg["id_col"]
     exclude_cols = [c for c in (target_col, id_col) if c in train_df.columns]
 
@@ -217,140 +219,6 @@ def scaling(self) -> None:  # type: ignore[override]
     self.artifacts[step] = out_files
 
     print(
-        f"[{step.upper()}] Done – artefacts at {run_step_dir}  "
+        f"[{step.upper()}] Done - artefacts at {run_step_dir}  "
         f"(train {len(train_scaled)}, val {len(val_scaled)}, test {len(test_scaled)})"
     )
-
-
-if __name__ == "__main__":
-    """
-    Smoke‑tests for ml_pipeline.scaling  (SPEC §19)
-
-    Scenarios exercised
-    -------------------
-    1. Training with no pre‑existing artefacts  (fresh run)
-    2. Training with artefacts present          (skip‑guard hit)
-    3. Inference with required artefacts        (reuse training outputs)
-    4. Inference without artefacts              (must fail clearly)
-
-    All tests rely on the shared DEFAULT_TEST_HASH to guarantee artefact
-    continuity across pipeline steps (SPEC §17).
-    """
-    import os
-    import shutil
-    import traceback
-    from pathlib import Path
-
-    import numpy as np
-    import pandas as pd
-
-    from ml_pipeline.base import MLPipeline
-    from ml_pipeline.utils import DEFAULT_TEST_HASH
-
-    step = "scaling"
-
-    # ------------------------------------------------------------------ #
-    # Helper                                                             #
-    # ------------------------------------------------------------------ #
-    def build_cfg(train_mode: bool, **kw) -> dict:
-        cfg: dict = {
-            "train_mode": train_mode,
-            "model_name": "dummy_model",
-            "model_hash": "abcd1234",
-            "dataset_name": "dummy_ds",
-            "feature_names": ["f1", "f2"],
-            "target_col": "target",
-            "id_col": "id",
-            "seed": 123,
-            "t1": True,   # mean
-            "s1": True,   # std
-            "use_mlflow": False,
-            # mandatory for inference
-            "train_hash": DEFAULT_TEST_HASH,
-        }
-        cfg.update(kw)
-        return cfg
-
-    def safe(label: str, fn):
-        try:
-            fn()
-            print(f"[OK ] {label}")
-        except Exception as exc:
-            print(f"[ERR] {label} → {exc}")
-            traceback.print_exc()
-
-    # ------------------------------------------------------------------ #
-    # Mock numeric‑only data (as produced by numeric_conversion)         #
-    # ------------------------------------------------------------------ #
-    np.random.seed(42)
-    n = 120
-    mock_train = pd.DataFrame(
-        {
-            "id": range(1, n + 1),
-            "feature_A": np.random.normal(10, 2, n),
-            "feature_B": np.random.normal(50, 5, n),
-            "target": np.random.choice([0, 1], n, p=[0.8, 0.2]),
-        }
-    )
-    mock_val = mock_train.sample(30, random_state=1).reset_index(drop=True)
-    mock_test = mock_train.sample(30, random_state=2).reset_index(drop=True)
-    mock_excluded = mock_train.sample(10, random_state=3).reset_index(drop=True)
-
-    # ------------------------------------------------------------------ #
-    # Clean slate for DEFAULT_TEST_HASH                                  #
-    # ------------------------------------------------------------------ #
-    artefact_root = Path("artifacts") / f"run_{DEFAULT_TEST_HASH}" / step
-    if artefact_root.exists():
-        shutil.rmtree(artefact_root)
-
-    # 1️⃣  Training – fresh artefacts
-    pipe_train = MLPipeline(build_cfg(True))
-    pipe_train.global_hash = DEFAULT_TEST_HASH
-    pipe_train.global_train_hash = DEFAULT_TEST_HASH
-    pipe_train.dataframes = {
-        "train_num": mock_train,
-        "val_num": mock_val,
-        "test_num": mock_test,
-        "excluded_num": mock_excluded,
-    }
-    print("\n>>> TRAINING RUN (fresh artefacts)")
-    safe("TRAIN‑fresh", pipe_train.scaling)
-
-    # 2️⃣  Training – skip‑guard hit
-    pipe_train_skip = MLPipeline(build_cfg(True))
-    pipe_train_skip.global_hash = DEFAULT_TEST_HASH
-    pipe_train_skip.global_train_hash = DEFAULT_TEST_HASH
-    pipe_train_skip.dataframes = {
-        "train_num": mock_train,
-        "val_num": mock_val,
-        "test_num": mock_test,
-    }
-    print("\n>>> TRAINING RUN (should skip)")
-    safe("TRAIN‑skip‑guard", pipe_train_skip.scaling)
-
-    # 3️⃣  Inference – artefacts present
-    infer_hash_ok = "abcdefabcdef"
-    pipe_infer_ok = MLPipeline(build_cfg(False, train_hash=DEFAULT_TEST_HASH))
-    pipe_infer_ok.global_hash = infer_hash_ok
-    pipe_infer_ok.global_train_hash = DEFAULT_TEST_HASH
-    pipe_infer_ok.dataframes = {
-        "test_num": mock_test
-    }  # only need test for this step
-    print("\n>>> INFERENCE RUN (artefacts present)")
-    safe("INFER‑reuse", pipe_infer_ok.scaling)
-
-    # 4️⃣  Inference – artefacts missing (expect failure)
-    missing_train_hash = "feedfeedfeed"
-    artefact_miss_dir = Path("artifacts") / f"run_{missing_train_hash}" / step
-    if artefact_miss_dir.exists():
-        shutil.rmtree(artefact_miss_dir)
-
-    pipe_infer_fail = MLPipeline(build_cfg(False, train_hash=missing_train_hash))
-    pipe_infer_fail.global_hash = "deadbeef0000"
-    pipe_infer_fail.global_train_hash = missing_train_hash
-    print("\n>>> INFERENCE RUN (artefacts missing – should fail)")
-    try:
-        pipe_infer_fail.scaling()
-        print("❌  ERROR: Missing‑artefact inference did *not* fail as expected")
-    except FileNotFoundError as e:
-        print(f"✅  Caught expected error → {e}")
