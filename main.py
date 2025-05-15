@@ -27,7 +27,7 @@ def main() -> None:
             # Step 1
             "seed": 42,
             "target_col": "fraud_bool",# "is_fraud",
-            "id_col": "account_id",  # "transaction_id",
+            "id_col": "client_id",  # "transaction_id",
             "use_mlflow": True,
             
             "train_size": 0.7,
