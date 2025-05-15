@@ -25,7 +25,7 @@ def main() -> None:
 
 
             # Step 1
-            "seed": 42,  # 42,
+            "seed": 44,  # 42,
             "target_col": "fraud_bool",# "is_fraud",
             "id_col": "account_id",  # "transaction_id",
             "use_mlflow": True,
@@ -62,11 +62,11 @@ def main() -> None:
 
             # Step 12: Baseline hyperparameters
             "baseline_hyperparams": {
-                "n_estimators": 400,
-                "max_depth": 6,
+                "n_estimators": 300,
+                "max_depth": 5,
                 "learning_rate": 0.1,
-                "subsample": 0.8,
-                "colsample_bytree": 0.8,
+                "subsample": 0.5,
+                "colsample_bytree": 0.5,
                 "use_label_encoder": False,
                 "eval_metric": "logloss"
             }
