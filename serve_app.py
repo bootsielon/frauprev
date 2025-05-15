@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-import os
+
 from pathlib import Path
 from typing import List
 
@@ -53,8 +53,8 @@ def discover_trained_runs(root: Path) -> List[str]:
     return sorted(hashes)
 
 
-def load_feature_names(run_hash: str) -> List[str]:
-    fn_file = ARTIFACTS_ROOT / f"run_{run_hash}" / "model_baseline" / "feature_names.json"
+def load_feature_names(train_hash: str) -> List[str]:
+    fn_file = ARTIFACTS_ROOT / f"run_{train_hash}" / "model_baseline" / "feature_names.json"
     if fn_file.exists():
         with open(fn_file, encoding="utf-8") as fh:
             return json.load(fh)["feature_names"]
@@ -82,13 +82,13 @@ def read_uploaded(file) -> pd.DataFrame | None:
     )
 
 
-def build_inference_cfg(run_hash: str, feature_names: list[str]) -> dict:
+def build_inference_cfg(train_hash: str, feature_names: list[str]) -> dict:
     """Minimal config that satisfies MLPipeline hashing rules in inference."""
     return {
         "train_mode": False,
-        "train_hash": run_hash,
+        "train_hash": train_hash,
         "model_name": "deployed_baseline",
-        "model_hash": "deployed_baseline",
+        "model_hash": train_hash,
         "dataset_name": "uploaded_ds",
         "feature_names": feature_names or ["dummy"],
         "target_col": "fraud_bool",  # "is_fraud",
