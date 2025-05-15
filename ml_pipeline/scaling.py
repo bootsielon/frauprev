@@ -43,7 +43,7 @@ def _standardise(
     """
     Return a copy of *df* where *numeric_cols* are centred/scaled.
 
-    Non‑numeric or excluded columns are left untouched.
+    Non-numeric or excluded columns are left untouched.
     """
     df_out = df.copy()
     if numeric_cols:
@@ -120,7 +120,7 @@ def scaling(self) -> None:  # type: ignore[override]
     np.random.seed(seed)
 
     test_df = self.dataframes["test_num"]
-    train_df = self.dataframes["train_num"] if self.train_mode else None
+    train_df = self.dataframes["train_num"] if self.train_mode else test_df
     val_df = self.dataframes["val_num"] if self.train_mode else None
     
     excluded_df = self.dataframes.get("excluded_num") if self.train_mode else None
@@ -136,21 +136,28 @@ def scaling(self) -> None:  # type: ignore[override]
     ]
 
     # ------------------------------------------------ centre / scale ----
-    centre_func = np.mean if cfg.get("t1", True) else np.median
-    scale_func = np.std if cfg.get("s1", True) else lambda x: np.subtract(*np.percentile(x, [75, 25]))
+    if self.train_mode:
+        centre_func = np.mean if cfg.get("t1", True) else np.median
+        scale_func = np.std if cfg.get("s1", True) else lambda x: np.subtract(*np.percentile(x, [75, 25]))
+    else:
+        centre_func = np.mean if train_manifest.get("t1", True) else np.median
+        scale_func = np.std if train_manifest.get("s1", True) else lambda x: np.subtract(*np.percentile(x, [75, 25]))
+    # Compute centre/scale stats
 
     centre_stats = train_df[numeric_cols].agg(centre_func)
     scale_stats = train_df[numeric_cols].agg(scale_func).replace(0, 1.0)
 
     # ------------------------------------------------ transform ---------
-    train_scaled = _standardise(train_df, numeric_cols, centre_stats, scale_stats)
-    val_scaled = _standardise(val_df, numeric_cols, centre_stats, scale_stats)
     test_scaled = _standardise(test_df, numeric_cols, centre_stats, scale_stats)
+    train_scaled = _standardise(train_df, numeric_cols, centre_stats, scale_stats) if self.train_mode else test_scaled
+    val_scaled = _standardise(val_df, numeric_cols, centre_stats, scale_stats) if self.train_mode else None  # test_scaled
+    
     excluded_scaled = (
         _standardise(excluded_df, numeric_cols, centre_stats, scale_stats)
         if excluded_df is not None
         else None
-    )
+    ) if self.train_mode else None
+    # If no excluded_df, set to None
 
     # ------------------------------------------------ persist artefacts -
     os.makedirs(run_step_dir, exist_ok=True)
