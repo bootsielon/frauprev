@@ -7,7 +7,7 @@ venv_name/
 mlruns/
 __pycache__/
 __pycache__
-# artifacts/
+artifacts_old/
 # Ignore only CSV files inside artifacts/
 artifacts/**/*.csv
 

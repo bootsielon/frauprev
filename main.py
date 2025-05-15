@@ -62,8 +62,8 @@ def main() -> None:
 
             # Step 12: Baseline hyperparameters
             "baseline_hyperparams": {
-                "n_estimators": 300,
-                "max_depth": 5,
+                "n_estimators": 320,
+                "max_depth": 4,
                 "learning_rate": 0.1,
                 "subsample": 0.5,
                 "colsample_bytree": 0.5,
