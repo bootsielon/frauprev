@@ -13,3 +13,4 @@ shap==0.47.1
 streamlit==1.44.1
 xgboost==3.0.1
 openpyxl
+pytest

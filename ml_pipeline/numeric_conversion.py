@@ -1,21 +1,21 @@
 """
-Numeric‑conversion step
+Numeric-conversion step
 =======================
 
-Converts categorical / mixed‑type columns into a fully numeric feature
+Converts categorical / mixed-type columns into a fully numeric feature
 matrix.  All artefacts are written to
 
     artifacts/run_<self.global_hash>/numeric_conversion/
 
 Key SPEC compliance
 -------------------
-•   One *global* hash per run; no per‑step hashes (SPEC §1, §2).  
-•   Skip‑guard appears first (SPEC §14).  
-•   Inference logic: *reuse → load‑from‑train → raise* (SPEC §5).  
-•   `self.hashes` removed (SPEC §3).  
+•   One *global* hash per run; no per-step hashes (SPEC §1, §2).  
+•   Skip-guard appears first (SPEC §14).  
+•   Inference logic: *reuse → load-from-train → raise* (SPEC §5).  
+•   `self.hashes` removed (SPEC §3).  
 •   Filenames contain **no hashes**; folder already carries the hash
-    (SPEC §25).  
-•   `log_registry(step, self.global_hash, …)` called (SPEC §7).  
+    (SPEC §25).  
+•   `log_registry(step, self.global_hash, …)` called (SPEC §7).  
 •   No recomputation happens during inference.
 """
 
@@ -36,10 +36,12 @@ from ml_pipeline.utils import log_registry, convert_numpy_types  # make_param_ha
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
-def _load_existing_numeric(step_dir: str) -> Dict[str, pd.DataFrame]:
+def _load_existing_numeric(self, step_dir: str) -> Dict[str, pd.DataFrame]:
     """Load numeric CSVs that are present in *step_dir*."""
     dfs: Dict[str, pd.DataFrame] = {}
-    for split in ("train", "val", "test", "excluded"):
+    splits = ("train", "val", "test", "excluded") if self.train_mode else ("test",)
+    # splits = ("train", "val", "test", "excluded") if self.train_mode else ("test",)
+    for split in splits:
         fp = os.path.join(step_dir, f"{split}_num.csv")
         if os.path.exists(fp):
             dfs[f"{split}_num"] = pd.read_csv(fp)
@@ -76,7 +78,7 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     if os.path.exists(run_manifest_dir):
         print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
         self.paths[step] = run_step_dir
-        self.dataframes.update(_load_existing_numeric(run_step_dir))
+        self.dataframes.update(_load_existing_numeric(self, run_step_dir))
         return
 
     # ------------------------------------------------------------------- #
@@ -98,12 +100,12 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
             self.train_transformations[step] = train_manifest.get("transformations", {})
             # self.train_metrics[step] = {}
             # self.train_dataframes[step] = {}
-            # self.dataframes.update(_load_existing_numeric(train_step_dir))
-            # return
+            self.dataframes.update(_load_existing_numeric(self, run_step_dir))
+            return
         # Nothing to reuse → spec mandates failure
-        #raise FileNotFoundError(
-        #    f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
-        #)
+        raise FileNotFoundError(
+            f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
+        )
 
     # ------------------------------------------------------------------- #
     # 2️⃣  Training mode – perform full computation                        #
@@ -130,11 +132,11 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ---------------------------------------------------------------- #
     # 2.1  Drop constants & identify column groups                     #
     # ---------------------------------------------------------------- #
-    dropped: list[str] = [] if self.train_mode else train_manifest.get("dropped_columns", [])
-    constant_columns: list[str] = [] if self.train_mode else train_manifest.get("constant_columns", [])
-    grouping_map: dict[str, Any] = {} if self.train_mode else train_manifest.get("grouping_map", {})
-    id_like_columns: list[str] = [] if self.train_mode else train_manifest.get("id_like_columns", [])
-    final_columns: list[str] = [] if self.train_mode else train_manifest.get("final_columns", [])
+    dropped: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("dropped_columns", [])
+    constant_columns: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("constant_columns", [])
+    grouping_map: dict[str, Any] = {} if self.train_mode else train_manifest.get("columns", {}).get("grouping_map", {})
+    id_like_columns: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("id_like_columns", [])
+    final_columns: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("final_columns", [])
     work_train = train_df.copy() if self.train_mode else test_df.copy()
 
     if self.train_mode:
@@ -243,6 +245,8 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # 2.3  Apply same treatment to val / test / excluded               #
     # ---------------------------------------------------------------- #
     def _apply_grouping(df: pd.DataFrame) -> pd.DataFrame:
+        # drop constant columns
+        # (already done in training)
         df = df.copy()
         # drop
         df.drop(columns=[c for c in dropped if c in df.columns], inplace=True, errors="ignore")
@@ -257,14 +261,14 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     
 
     val_proc = _apply_grouping(val_df) if self.train_mode else None
-    test_proc = _apply_grouping(test_df) if self.train_mode else None
+    test_proc = _apply_grouping(test_df) # if self.train_mode else None
     excluded_proc = _apply_grouping(excluded_df) if (excluded_df is not None) and (self.train_mode) else None
 
     # ---------------------------------------------------------------- #
     # 2.4  Imputation                                                  #
     # ---------------------------------------------------------------- #  
-    central_tendency = cfg.get("central_tendency", "median") if self.train_mode else train_manifest.get("central_tendency", "median")
-    imputation_stats: dict[str, dict[str, Any]] = {} if self.train_mode else self.train_artifacts.get("outputs", {}).get("imputation_stats", {})
+    central_tendency = cfg.get("central_tendency", "median") if self.train_mode else train_manifest.get("columns", {}).get("central_tendency", "median")
+    imputation_stats: dict[str, dict[str, Any]] = {} if self.train_mode else  train_manifest.get("columns", {}).get("imputation_stats", {})
 
 
     # impute numeric columns
@@ -364,49 +368,49 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ---------------------------------------------------------------- #
     os.makedirs(run_step_dir, exist_ok=True)
 
-    outputs = {
-        "train_num_csv": os.path.join(run_step_dir, "train_num.csv"),
-        "val_num_csv": os.path.join(run_step_dir, "val_num.csv"),
+    artifacts = {
+        "train_num_csv": os.path.join(run_step_dir, "train_num.csv") if self.train_mode else None,
+        "excluded_num_csv": os.path.join(run_step_dir, "excluded_num.csv") if self.train_mode else None,
+        "val_num_csv": os.path.join(run_step_dir, "val_num.csv") if self.train_mode else None,
         "test_num_csv": os.path.join(run_step_dir, "test_num.csv"),
-        "grouping_map_json": os.path.join(run_step_dir, "grouping_map.json"),
-        "imputation_stats_json": os.path.join(run_step_dir, "imputation_stats.json"),
-        "metadata_json": os.path.join(run_step_dir, "metadata.json"),
-        "final_columns_json": os.path.join(run_step_dir, "final_columns.json"),
+        "grouping_map_json": os.path.join(run_step_dir, "grouping_map.json") if self.train_mode else os.path.join(train_step_dir, "grouping_map.json"),
+        "imputation_stats_json": os.path.join(run_step_dir, "imputation_stats.json") if self.train_mode else os.path.join(train_step_dir, "imputation_stats.json"),
+        "metadata_json": os.path.join(run_step_dir, "metadata.json"),  # if self.train_mode else None,
+        "final_columns_json": os.path.join(run_step_dir, "final_columns.json") if self.train_mode else os.path.join(train_step_dir, "final_columns.json") ,
     }
 
 
     for name, df in encoded_sets.items():
         if df is not None:
-            outputs[f"{name}_num_csv"] = os.path.join(run_step_dir, f"{name}_num.csv")
-            df.to_csv(outputs[f"{name}_num_csv"], index=False)
+            artifacts[f"{name}_num_csv"] = os.path.join(run_step_dir, f"{name}_num.csv")
+            df.to_csv(artifacts[f"{name}_num_csv"], index=False)
 
-    with open(outputs["grouping_map_json"], "w") as fh:
+    with open(artifacts["grouping_map_json"], "w") as fh:
         json.dump(convert_numpy_types(grouping_map), fh, indent=2)
-    with open(outputs["imputation_stats_json"], "w") as fh:
+    with open(artifacts["imputation_stats_json"], "w") as fh:
         json.dump(convert_numpy_types(imputation_stats), fh, indent=2)
 
-    metadata = {
-        "dropped_columns": dropped + constant_columns,
+    metadata = {}
+
+    columns = {
+        "dropped_columns": list(set(dropped + constant_columns)),
         "id_like_columns": id_like_columns,
         "encoded_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
         "constant_columns": constant_columns,
         "original_columns": train_df.columns.tolist() if self.train_mode else test_df.columns.tolist(),
-        "grouping_map": grouping_map,
-        "imputation_stats": imputation_stats,
-        "cardinality_threshold": c1,
-        "rare_category_fraction": c2,
-        "high_as_mid": b1,
-        "id_like_log_ratio_threshold": c3,
-        "id_like_exempt": id_like_exempt,
-        "central_tendency": central_tendency,
+        "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
+        "grouping_map": grouping_map if self.train_mode else train_manifest.get("columns", {}).get("grouping_map", {}),
+    }
+
+    metadata.update(columns)
+
+    # metadata = {
+        # "central_tendency": central_tendency if self.train_mode else train_manifest.get("central_tendency", None),
         #"dataset_size": dataset_size,
         #"train_size": len(train_enc),
         #"val_size": len(val_enc),
         #"test_size": len(test_enc),
-        "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
-    }
-    with open(outputs["metadata_json"], "w") as fh:
-        json.dump(metadata, fh, indent=2)
+    #}
 
     # ---------------------------------------------------------------- #
     # 2.7  MLflow & registry                                           #
@@ -423,22 +427,39 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ---------------------------------------------------------------- #
     self.dataframes.update(
         {
-            "train_num": train_enc,
-            "val_num": val_enc,
+            "train_num": train_enc if self.train_mode else None,
+            "val_num": val_enc if self.train_mode else None,
             "test_num": test_enc,
-            "excluded_num" : excluded_enc if excluded_enc is not None else None,
+            "excluded_num" : excluded_enc if self.train_mode and excluded_enc is not None else None,
         }
     )   
 
     self.paths[step] = run_step_dir
     # removed: self.hashes[step]  # SPEC §3
-    self.artifacts[step] = outputs
-    self.transformations[step] = {
-        "grouping_map": grouping_map,
-        "imputation_stats": imputation_stats,
-        "feature_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
-        "dropped_columns": dropped + constant_columns,
+    self.artifacts[step] = artifacts
+    
+    
+    transformations = {
+        "grouping_map": grouping_map if self.train_mode else self.train_transformations[step].get("grouping_map", {}),
+        "imputation_stats": imputation_stats if self.train_mode else train_manifest.get("columns", {}).get("imputation_stats", {}),
+        # "imputation_stats": imputation_stats if self.train_mode else self.train_manifest.get("artifacts", {}).get("imputation_stats", {}),
+        "cardinality_threshold": c1 if self.train_mode else train_manifest.get("cardinality_threshold", None),
+        "rare_category_fraction": c2 if self.train_mode else train_manifest.get("rare_category_fraction", None),
+        "high_as_mid": b1 if self.train_mode else train_manifest.get("high_as_mid", None),
+        "id_like_log_ratio_threshold": c3 if self.train_mode else train_manifest.get("id_like_log_ratio_threshold", None),
+        "id_like_exempt": id_like_exempt if self.train_mode else train_manifest.get("id_like_exempt", None),
+ 
+        # "feature_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
+        # "dropped_columns": list(set(dropped + constant_columns)),
     }
+
+    self.transformations[step] = transformations
+
+    metadata.update(transformations)
+
+    with open(artifacts["metadata_json"], "w") as fh:
+        json.dump(metadata, fh, indent=2)
+
     self.metadata[step] = metadata
 
 
@@ -452,176 +473,28 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
         # do not raise KeyError (SPEC §16 – correctness)
         "config": {k: cfg.get(k)
                    for k in ("c1", "c2", "b1", "c3",
-                             "id_like_exempt", "central_tendency")},
+                             "id_like_exempt", "central_tendency")} if self.train_mode else train_manifest.get("config", {}),
         "output_dir": run_step_dir,
-        "artifacts": outputs,
-        'transformations': self.transformations[step],
-        'artifacts': self.artifacts[step],
-        'outputs': outputs,
-        'metadata': self.metadata[step],
-        "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
-        'columns':{
-            "dropped_columns": dropped + constant_columns,
-            "id_like_columns": id_like_columns,
-            "grouping_map": grouping_map,
-            "imputation_stats": imputation_stats,
-            "cardinality_threshold": c1,
-            "rare_category_fraction": c2,
-            "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
-            "high_as_mid": b1,
-            "id_like_log_ratio_threshold": c3,
-            "id_like_exempt": id_like_exempt,
-            "central_tendency": central_tendency,
-            #"dataset_size": dataset_size,
-            #"train_size": len(train_enc),
-            #"val_size": len(val_enc),
-            #"test_size": len(test_enc),
-        }
+        "train_dir": train_step_dir if not self.train_mode else run_step_dir,
+        "artifacts": artifacts,
+        'transformations': transformations,  # if self.train_mode else self.train_transformations[step],
+        'artifacts': artifacts,  # self.artifacts[step],
+        # 'train_artifacts': self.train_artifacts[step] if not self.train_mode else None,
+        # 'train_transformations': self.train_transformations[step] if not self.train_mode else None,
+        'metadata': metadata,  # self.metadata[step],
+        # "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
+        'columns': columns,
     }
+
     with open(run_manifest_dir, "w") as fh:
         json.dump(manifest, fh, indent=2)
 
-
+    
+    # self.train_manifest[step] = train_manifest if not self.train_mode else None
 
     print(f"Manifest saved to: {run_manifest_dir}")
-    #print(f"Artifacts: {outputs}")
-    print(f"Artefacts saved to: {run_step_dir}")
+    #print(f"Artifacts: {artifacts}")
+    print(f"Artifacts saved to: {run_step_dir}")
     print(f"[{step.upper()}] Finished")
 
-if __name__ == "__main__":
-    """
-    Smoke‑tests for numeric_conversion
-    ----------------------------------
-    1. Training run – fresh artefacts (compute).
-    2. Training run – artefacts present (skip).
-    3. Inference  – artefacts present (load).
-    4. Inference  – artefacts missing (fail).
-    """
-    import os
-    import shutil
-    import numpy as np
-    import pandas as pd
-
-    from ml_pipeline.base import MLPipeline
-    from ml_pipeline.utils import DEFAULT_TEST_HASH
-
-    # ------------------------------------------------------------------ #
-    # Mock data set‑up                                                   #
-    # ------------------------------------------------------------------ #
-    np.random.seed(42)
-    n_samples = 200
-    mock_train = pd.DataFrame(
-        {
-            "id": range(1, n_samples + 1),
-            "numeric_col": np.random.normal(0, 1, n_samples),
-            "integer_col": np.random.randint(0, 100, n_samples),
-            "low_card_cat": np.random.choice(["A", "B", "C"], n_samples),
-            "mid_card_cat": np.random.choice([f"Cat_{i}" for i in range(20)], n_samples),
-            "high_card_cat": np.random.choice([f"ID_{i}" for i in range(150)], n_samples),
-            "id_like_col": [f"U{i:05d}" for i in range(n_samples)],
-            "missing_values_col": np.random.choice([np.nan, 1, 2, 3], n_samples),
-            "target": np.random.choice([0, 1], n_samples, p=[0.8, 0.2]),
-        }
-    )
-    mock_train.loc[np.random.choice(n_samples, 10), "low_card_cat"] = ""
-
-    mock_val = mock_train.sample(n=50, random_state=123).reset_index(drop=True)
-    mock_test = mock_train.sample(n=50, random_state=456).reset_index(drop=True)
-
-    # ------------------------------------------------------------------ #
-    # Helper to build a minimally valid pipeline config                  #
-    # ------------------------------------------------------------------ #
-    def build_pipeline(*, train_mode: bool, run_hash: str, train_hash: str | None = None):
-        cfg = {
-            # ----- keys required by base.py / hashing rules
-            "train_mode": train_mode,
-            "model_name": "dummy_model",
-            "model_hash": "dummy_model_hash",
-            "dataset_name": "mock_dataset",
-            "feature_names": sorted(mock_train.columns.tolist()),
-            "extra_inference_settings": {},
-
-            # ----- numeric‑conversion hyper‑params
-            "seed": 42,
-            "target_col": "target",
-            "id_col": "id",
-            "use_mlflow": False,
-            "c1": 5,
-            "c2": 0.2,
-            "b1": True,
-            "c3": 1.5,
-            "id_like_exempt": True,
-            "central_tendency": "median",
-        }
-        if not train_mode:
-            cfg["train_hash"] = train_hash
-        pipe = MLPipeline(config=cfg)
-        pipe.global_hash = run_hash
-        pipe.global_train_hash = run_hash if train_mode else train_hash
-        return pipe
-    
-    
-    step = "numeric_conversion"
-    # ---------- clean slate for DEFAULT_TEST_HASH --------------------- #
-    train_run_dir = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}", step)
-    if os.path.exists(train_run_dir):
-        shutil.rmtree(train_run_dir)
-
-    # ------------------------------------------------------------------ #
-    # 1️⃣  TRAINING – fresh artefacts                                    #
-    # ------------------------------------------------------------------ #
-    pipe_train = build_pipeline(train_mode=True, run_hash=DEFAULT_TEST_HASH)
-    pipe_train.dataframes = {
-        "train": mock_train,
-        "val": mock_val,
-        "test": mock_test,
-        "excluded": mock_train.sample(n=20, random_state=789),
-    }
-    print("\n>>> TRAINING RUN (fresh artefacts)")
-    pipe_train.numeric_conversion()
-
-    # ------------------------------------------------------------------ #
-    # 2️⃣  TRAINING – artefacts present (skip)                           #
-    # ------------------------------------------------------------------ #
-    pipe_train_skip = build_pipeline(train_mode=True, run_hash=DEFAULT_TEST_HASH)
-    pipe_train_skip.dataframes = {
-        "train": mock_train,
-        "val": mock_val,
-        "test": mock_test,
-    }
-    print("\n>>> TRAINING RUN (should skip)")
-    pipe_train_skip.numeric_conversion()
-
-    # ------------------------------------------------------------------ #
-    # 3️⃣  INFERENCE – artefacts present                                 #
-    # ------------------------------------------------------------------ #
-    infer_hash_ok = "abcabcabcabc"
-    pipe_infer_ok = build_pipeline(
-        train_mode=False, run_hash=infer_hash_ok, train_hash=DEFAULT_TEST_HASH
-    )
-    pipe_infer_ok.dataframes = {"test": mock_test}
-    print("\n>>> INFERENCE RUN (artefacts present)")
-    pipe_infer_ok.numeric_conversion()
-
-    # ------------------------------------------------------------------ #
-    # 4️⃣  INFERENCE – artefacts missing (must fail)                     #
-    # ------------------------------------------------------------------ #
-    infer_hash_fail = "deadbeef0000"
-    missing_train_hash = "feedfeedfeed"
-    
-    missing_dir = os.path.join("artifacts", f"run_{missing_train_hash}", step)
-    if os.path.exists(missing_dir):
-        shutil.rmtree(missing_dir)
-
-    pipe_infer_fail = build_pipeline(
-        train_mode=False, run_hash=infer_hash_fail, train_hash=missing_train_hash
-    )
-    pipe_infer_fail.dataframes = {"test": mock_test}
-    print("\n>>> INFERENCE RUN (artefacts missing – should fail)")
-    try:
-        pipe_infer_fail.numeric_conversion()
-        print("❌  ERROR: inference did NOT fail although artefacts are missing")
-    except FileNotFoundError as e:
-        print(f"✅  Caught expected error → {e}")
-
-    print("\nSmoke‑tests finished.")
+#  if __name__ == "__main__":
