@@ -73,7 +73,7 @@ def load_data_old(db_path: str = "fraud_poc.db") -> pd.DataFrame:
 
     return (
         df_transactions
-        .merge(df_clients , on="client_id")
+        .merge(df_clients , on="account_id")
         .merge(df_merchants, on="merchant_id")
     )
 

@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
     now = datetime.now()
     df_demo = pd.DataFrame({
-        "client_id": [1, 2],
+        "account_id": [1, 2],
         "merchant_id": [101, 102],
         "amount": [100.0, 200.0],
         "is_fraud": [0, 1],

@@ -17,7 +17,7 @@ df_clients.rename(columns={"account_creation_date": "account_creation_date_clien
 df_merchants.rename(columns={"account_creation_date": "account_creation_date_merchant"}, inplace=True)
 
 # Merge
-df = df_transactions.merge(df_clients, on="client_id")
+df = df_transactions.merge(df_clients, on="account_id")
 df = df.merge(df_merchants, on="merchant_id")
 
 # Convert timestamps

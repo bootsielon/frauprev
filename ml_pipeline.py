@@ -62,7 +62,7 @@ def load_data(db_path: str = "fraud_poc.db") -> pd.DataFrame:
     conn.close()
     df_clients.rename(columns={"account_creation_date": "account_creation_date_client"}, inplace=True)
     df_merchants.rename(columns={"account_creation_date": "account_creation_date_merchant"}, inplace=True)
-    df = df_transactions.merge(df_clients, on="client_id").merge(df_merchants, on="merchant_id")
+    df = df_transactions.merge(df_clients, on="account_id").merge(df_merchants, on="merchant_id")
     return df
 
 

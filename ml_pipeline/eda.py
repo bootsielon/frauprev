@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
     df_demo = pd.DataFrame(
         {
-            "client_id": [1, 2],
+            "account_id": [1, 2],
             "merchant_id": [10, 20],
             "amount": [100.5, 200.0],
             "timestamp": ["2023-01-01", "2023-01-02"],

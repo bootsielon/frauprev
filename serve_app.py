@@ -77,7 +77,7 @@ def read_uploaded(file) -> pd.DataFrame | None:
         return None
 
     return (
-        df_tx.merge(df_clients, on="client_id", how="left")
+        df_tx.merge(df_clients, on="account_id", how="left")
              .merge(df_merchants, on="merchant_id", how="left")
     )
 

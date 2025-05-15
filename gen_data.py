@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 def create_tables(cursor):
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS clients (
-        client_id TEXT PRIMARY KEY,
+        account_id TEXT PRIMARY KEY,
         account_creation_date TEXT,
         avg_spend REAL,
         country TEXT,
@@ -41,10 +41,10 @@ def create_tables(cursor):
         location TEXT,
         ip_address TEXT,
         device_id TEXT,
-        client_id TEXT,
+        account_id TEXT,
         merchant_id TEXT,
         is_fraud INTEGER,
-        FOREIGN KEY(client_id) REFERENCES clients(client_id),
+        FOREIGN KEY(account_id) REFERENCES clients(account_id),
         FOREIGN KEY(merchant_id) REFERENCES merchants(merchant_id)
     )
     ''')
@@ -135,14 +135,14 @@ def generate_dataframes(n_clients=50, n_merchants=50, n_transactions=10000, rand
     transactions = generate_transactions(fake, clients, merchants, n=n_transactions)
 
     df_clients = pd.DataFrame(clients, columns=[
-        "client_id", "account_creation_date", "avg_spend", "country", "ip_address", "device_id", "has_biometrics"
+        "account_id", "account_creation_date", "avg_spend", "country", "ip_address", "device_id", "has_biometrics"
     ])
     df_merchants = pd.DataFrame(merchants, columns=[
         "merchant_id", "name", "category", "risk_score", "account_creation_date", "country"
     ])
     df_transactions = pd.DataFrame(transactions, columns=[
         "transaction_id", "timestamp", "amount", "currency", "location", "ip_address", "device_id",
-        "client_id", "merchant_id", "is_fraud"
+        "account_id", "merchant_id", "is_fraud"
     ])
     return df_clients, df_merchants, df_transactions
 

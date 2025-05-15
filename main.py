@@ -25,9 +25,9 @@ def main() -> None:
 
 
             # Step 1
-            "seed": 42,
+            "seed": 42,  # 42,
             "target_col": "fraud_bool",# "is_fraud",
-            "id_col": "client_id",  # "transaction_id",
+            "id_col": "account_id",  # "transaction_id",
             "use_mlflow": True,
             
             "train_size": 0.7,
@@ -35,7 +35,7 @@ def main() -> None:
             "val_size": 0.1,
             "use_stratification": False,
             "use_downsampling": True,
-            # "stratify_cols": ["client_id", "merchant_id"],
+            # "stratify_cols": ["account_id", "merchant_id"],
             "stratify_cardinality_threshold": 5,
 
             # Step 3

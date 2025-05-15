@@ -167,7 +167,7 @@ class MLPipeline:
 
             df_clients   = df_clients.rename(columns={"account_creation_date": "account_creation_date_client"})
             df_merchants = df_merchants.rename(columns={"account_creation_date": "account_creation_date_merchant"})
-            df = df.merge(df_clients , on="client_id",   how="left")
+            df = df.merge(df_clients , on="account_id",   how="left")
             df = df.merge(df_merchants, on="merchant_id", how="left")
             
         elif self.data_source == "csv":
@@ -268,7 +268,7 @@ if __name__ == "__main__":
 
     df_demo = pd.DataFrame(
         {
-            "client_id": [1, 2],
+            "account_id": [1, 2],
             "merchant_id": [10, 20],
             "amount": [100.5, None],
             "timestamp": ["2022-01-01", "2022-01-02"],
