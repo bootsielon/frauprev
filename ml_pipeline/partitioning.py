@@ -478,7 +478,7 @@ if __name__ == "__main__":
     mock_df = pd.DataFrame({
         "transaction_id": range(1, n_samples + 1),
         "amount": np.random.uniform(5, 500, n_samples),
-        "client_id": np.random.randint(1, 10, n_samples),
+        "account_id": np.random.randint(1, 10, n_samples),
         "merchant_id": np.random.randint(20, 40, n_samples),
         "hour": np.random.randint(0, 6, n_samples),
         "day": np.random.randint(0, 3, n_samples),

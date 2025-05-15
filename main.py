@@ -31,8 +31,8 @@ def main() -> None:
             "use_mlflow": True,
             
             "train_size": 0.7,
-            "test_size": 0.15,
-            "val_size": 0.15,
+            "test_size": 0.2,
+            "val_size": 0.1,
             "use_stratification": False,
             "use_downsampling": True,
             # "stratify_cols": ["client_id", "merchant_id"],
@@ -62,7 +62,7 @@ def main() -> None:
 
             # Step 12: Baseline hyperparameters
             "baseline_hyperparams": {
-                "n_estimators": 100,
+                "n_estimators": 400,
                 "max_depth": 6,
                 "learning_rate": 0.1,
                 "subsample": 0.8,

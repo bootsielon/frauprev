@@ -92,7 +92,7 @@ def build_inference_cfg(run_hash: str, feature_names: list[str]) -> dict:
         "dataset_name": "uploaded_ds",
         "feature_names": feature_names or ["dummy"],
         "target_col": "fraud_bool",  # "is_fraud",
-        "id_col": "client_id",  # "transaction_id",
+        "id_col": "account_id",  # "transaction_id",
         "use_mlflow": False,
     }
 
