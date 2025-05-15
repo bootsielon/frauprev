@@ -1,0 +1,18 @@
+{
+  "step": "scaling",
+  "param_hash": "622dfd4f3952",
+  "timestamp": "2025-04-25T17:57:18.494037+00:00",
+  "config": {
+    "t1": false,
+    "s1": false,
+    "seed": 42
+  },
+  "output_dir": "artifacts\\run_622dfd4f3952\\scaling",
+  "outputs": {
+    "train_scaled_csv": "train_scaled.csv",
+    "val_scaled_csv": "val_scaled.csv",
+    "test_scaled_csv": "test_scaled.csv",
+    "scaling_stats_json": "scaling_stats.json",
+    "excluded_scaled_csv": "excluded_scaled.csv"
+  }
+}

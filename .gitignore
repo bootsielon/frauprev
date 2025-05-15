@@ -7,7 +7,10 @@ venv_name/
 mlruns/
 __pycache__/
 __pycache__
-artifacts/
+# artifacts/
+# Ignore only CSV files inside artifacts/
+artifacts/**/*.csv
+
 *.egg-info/
 downloads/
 inputs/
@@ -32,9 +35,9 @@ dist/
 # *.txt
 *.csv
 *.tsv
-*.json
-*.yaml
-*.yml
+# *.json
+# *.yaml
+# *.yml
 *.xml
 *.xls
 *.xlsx

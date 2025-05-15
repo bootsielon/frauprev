@@ -1,0 +1,130 @@
+{
+  "fraud_bool": {
+    "strategy": "median",
+    "value": 0.5
+  },
+  "income": {
+    "strategy": "median",
+    "value": 0.7000000000000001
+  },
+  "name_email_similarity": {
+    "strategy": "median",
+    "value": 0.41128427914405213
+  },
+  "prev_address_months_count": {
+    "strategy": "median",
+    "value": -1.0
+  },
+  "current_address_months_count": {
+    "strategy": "median",
+    "value": 72.0
+  },
+  "customer_age": {
+    "strategy": "median",
+    "value": 40.0
+  },
+  "days_since_request": {
+    "strategy": "median",
+    "value": 0.01408112600789215
+  },
+  "intended_balcon_amount": {
+    "strategy": "median",
+    "value": -0.8743911342555518
+  },
+  "zip_count_4w": {
+    "strategy": "median",
+    "value": 1290.0
+  },
+  "velocity_6h": {
+    "strategy": "median",
+    "value": 5086.197293366934
+  },
+  "velocity_24h": {
+    "strategy": "median",
+    "value": 4700.257134042347
+  },
+  "velocity_4w": {
+    "strategy": "median",
+    "value": 4871.821969065155
+  },
+  "bank_branch_count_8w": {
+    "strategy": "median",
+    "value": 7.0
+  },
+  "date_of_birth_distinct_emails_4w": {
+    "strategy": "median",
+    "value": 8.0
+  },
+  "credit_risk_score": {
+    "strategy": "median",
+    "value": 147.0
+  },
+  "email_is_free": {
+    "strategy": "median",
+    "value": 1.0
+  },
+  "phone_home_valid": {
+    "strategy": "median",
+    "value": 0.0
+  },
+  "phone_mobile_valid": {
+    "strategy": "median",
+    "value": 1.0
+  },
+  "bank_months_count": {
+    "strategy": "median",
+    "value": 3.0
+  },
+  "has_other_cards": {
+    "strategy": "median",
+    "value": 0.0
+  },
+  "proposed_credit_limit": {
+    "strategy": "median",
+    "value": 200.0
+  },
+  "foreign_request": {
+    "strategy": "median",
+    "value": 0.0
+  },
+  "session_length_in_minutes": {
+    "strategy": "median",
+    "value": 5.099252592138166
+  },
+  "keep_alive_session": {
+    "strategy": "median",
+    "value": 0.0
+  },
+  "device_distinct_emails_8w": {
+    "strategy": "median",
+    "value": 1.0
+  },
+  "month": {
+    "strategy": "median",
+    "value": 3.0
+  },
+  "account_id": {
+    "strategy": "mode",
+    "value": "Other"
+  },
+  "payment_type": {
+    "strategy": "mode",
+    "value": "AB"
+  },
+  "employment_status": {
+    "strategy": "mode",
+    "value": "CA"
+  },
+  "housing_status": {
+    "strategy": "mode",
+    "value": "BA"
+  },
+  "source": {
+    "strategy": "mode",
+    "value": "INTERNET"
+  },
+  "device_os": {
+    "strategy": "mode",
+    "value": "windows"
+  }
+}
