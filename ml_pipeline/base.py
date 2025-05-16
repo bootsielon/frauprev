@@ -60,13 +60,13 @@ class MLPipeline:
         self.config[step] = deepcopy(input_config)
         self.train_mode: bool = bool(self.config[step].get("train_mode", True))
         self.config[step]["train_mode"] = self.train_mode  # echo back
-
+        self.csv_path = self.config[step].get("csv_path")
         # -------------------- data handles ----------------------------
         self.data_source    = self.config[step].get("data_source")  # data_source
-        self.db_path        = self.config[step].get("db_path")
-        self.xlsx_path      = self.config[step].get("xlsx_path")  # updated to use config
-        self.csv_path       = self.config[step].get("csv_path")   # updated to use config
-        self.raw_data       = self.config[step].get("raw_data")   # updated to use config
+        self.db_path        = self.config[step].get("sqlite_path")
+        self.xlsx_path      = self.config[step].get("excel_path")  # updated to use config
+        # self.csv_path       = self.config[step].get("csv_path")   # updated to use config
+        self.raw_data       = self.config[step].get("raw_path")   # updated to use config
 
         # ------------------------------------------------ bookkeeping --
         self.dataframes: dict[str, pd.DataFrame] = {}
@@ -78,7 +78,7 @@ class MLPipeline:
         self.metadata  : dict[str, Any]            = {}
         # ------------------------------------------------ run hash -----
         self.dataframes[step] = {}
-        self.dataframes[step]["raw"] = raw_data
+        self.dataframes[step]["raw"] = pd.read_csv(self.csv_path)  # raw_data
 
         if self.train_mode:
             full_config = {
@@ -147,17 +147,29 @@ class MLPipeline:
         """
         Load and merge raw data from SQLite / Excel / CSV or the supplied DF.
         """
-        if self.data_source == "raw":
-            if self.raw_data is None:
-                raise ValueError("raw_data=None while data_source='raw'")
-            return self.raw_data.copy()
+        print(f"[DEBUG] _load_data() loading from: {self.csv_path}")
+        assert os.path.exists(self.csv_path), f"File does not exist: {self.csv_path}"
+        df = pd.read_csv(self.csv_path)
+        print(f"[DEBUG] Loaded in _load_data: shape={df.shape}, columns={df.columns.tolist()}")
+        return df
 
+
+    def _load_data_old(self) -> pd.DataFrame:
+        """
+        Load and merge raw data from SQLite / Excel / CSV or the supplied DF.
+        """
         df_clients   = pd.DataFrame()
         df_merchants = pd.DataFrame()
         df = pd.DataFrame()
         conn = None
 
-        if self.data_source == "sqlite" or self.data_source == "xlsx":
+
+        if self.data_source == "raw":
+            if self.raw_data is None:
+                raise ValueError("raw_data=None while data_source='raw'")
+            return self.raw_data.copy()
+
+        elif self.data_source == "sqlite" or self.data_source == "xlsx":
             if self.data_source == "sqlite":
                 import sqlite3
                 conn = sqlite3.connect(self.db_path)
@@ -179,9 +191,11 @@ class MLPipeline:
             # df_clients   = pd.read_csv(self.csv_path["clients"])
             # df_merchants = pd.read_csv(self.csv_path["merchants"])
             # df_tx        = pd.read_csv(self.csv_path["transactions"])
-            df = pd.read_csv(self.csv_path)
-        else:
-            raise ValueError(f"Unknown data_source: {self.csv_path}")
+            if isinstance(self.csv_path, str) and os.path.exists(self.csv_path):
+                return pd.read_csv(self.csv_path)
+            else:
+                raise ValueError(f"Unknown data_source: {self.csv_path}")
+
 
         # unify column names
         if self.data_source == "sqlite":

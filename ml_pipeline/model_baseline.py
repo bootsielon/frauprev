@@ -88,6 +88,8 @@ def model_baseline(self) -> None:  # type: ignore[override]
     run_manifest_dir = os.path.join(run_step_dir, "manifest.json")
     self.models[step] = {}
     self.metrics[step] = {}
+    self.train_models[step] = {}
+    # self.train_metrics[step] = {}
     # ------------------------------------------------------------------- #
     # 0️⃣  Skip-guard - artifacts already in *current* run                #
     # ------------------------------------------------------------------- #
@@ -127,7 +129,7 @@ def model_baseline(self) -> None:  # type: ignore[override]
             train_artifacts = _load_existing_model(train_step_dir)
             self.train_artifacts[step] = train_artifacts
             self.train_models[step]["baseline"] = self.train_artifacts[step]["model"]
-            self.train_metrics[step]["baseline"] = self.train_artifacts[step]["metrics"]
+            # self.train_metrics[step]["baseline"] = self.train_artifacts[step]["metrics"]
             self.train_paths[step] = train_step_dir
             self.train_artifacts[step] = {
                 "model_file": os.path.join(train_step_dir, "model.json"),

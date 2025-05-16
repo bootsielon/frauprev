@@ -125,13 +125,15 @@ def scaling(self) -> None:  # type: ignore[override]
             self.train_transformations[step] = train_manifest.get("train_transformations", {})
             self.train_artifacts[step] = train_manifest.get("artifacts", {})
             self.train_transformations[step] = train_manifest.get("transformations", {})
+
             # self.train_metrics[step] = {}
             # self.train_dataframes[step] = {}
-            return
+            #return
         # Nothing to reuse → spec mandates failure
-        raise FileNotFoundError(
-            f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
-        )
+        else:
+            raise FileNotFoundError(
+                f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
+            )
 
 
     # ------------------------------------------------------------------- #
@@ -166,7 +168,15 @@ def scaling(self) -> None:  # type: ignore[override]
         scale_func = np.std if train_manifest.get("config", {}).get("s1", True) else lambda x: np.subtract(*np.percentile(x, [75, 25]))
     # Compute centre/scale stats
 
-    centre_stats = train_df[numeric_cols].agg(centre_func)
+    # centre_stats = train_df[numeric_cols].agg(centre_func)
+    if self.train_mode:
+        centre_func_name = "mean" if cfg.get("t1", True) else "median"
+    else:
+        centre_func_name = "mean" if train_manifest.get("config", {}).get("t1", True) else "median"
+
+    centre_stats = train_df[numeric_cols].agg(centre_func_name)
+
+
     scale_stats = train_df[numeric_cols].agg(scale_func).replace(0, 1.0)
 
     # ------------------------------------------------ transform ---------
@@ -257,6 +267,13 @@ def scaling(self) -> None:  # type: ignore[override]
 
     self.metadata[step] = metadata
 
+    outputs = {}
+    if self.train_mode:
+        outputs = {k: os.path.basename(v) for k, v in out_files.items()}
+    else:
+        outputs = {"test_scaled_csv": os.path.basename(out_files["test_scaled_csv"])}
+
+
     manifest = {
         "step": step,
         "param_hash": param_hash,  # still recorded for traceability
@@ -267,7 +284,7 @@ def scaling(self) -> None:  # type: ignore[override]
             "seed": seed,
         },
         "output_dir": run_step_dir,
-        "outputs": {k: os.path.basename(v) for k, v in out_files.items()},
+        "outputs": outputs,  # {k: os.path.basename(v) for k, v in out_files.items()},
         "transformations": self.transformations[step],
         "artifacts": self.artifacts[step],
         "paths": self.paths[step],
@@ -290,5 +307,7 @@ def scaling(self) -> None:  # type: ignore[override]
 
     print(
         f"[{step.upper()}] Done - artefacts at {run_step_dir}  "
-        f"(train {len(train_scaled)}, val {len(val_scaled)}, test {len(test_scaled)})"
+        f"(test {len(test_scaled)}"
+        + (f", train {len(train_scaled)}, val {len(val_scaled)}" if self.train_mode else "")
+        + ")"
     )

@@ -203,9 +203,7 @@ def save_outputs(df_train, df_val, df_test, df_excluded,
 
 
 def create_manifest(step, param_hash, config, step_dir):
-    """Create and save the manifest file."""
-    outputs = None
-    
+    """Create and save the manifest file."""    
     outputs = {"test_csv": "test.csv",}
 
     if config["train_mode"]:
@@ -286,10 +284,10 @@ def partitioning(self) -> None:
     # ----------------------------------------------------------------
     if not self.train_mode:
         # step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
-        train_step_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
-        train_manifest_dir = os.path.join(train_step_dir, "manifest.json")
-        train_manifest = {}
-        if os.path.exists(train_manifest_dir):
+        # train_step_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
+        # train_manifest_dir = os.path.join(train_step_dir, "manifest.json")
+        # train_manifest = {}
+        """if os.path.exists(train_manifest_dir):
             print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
             train_manifest = json.load(open(train_manifest_dir, "r"))
             self.train_paths[step] = train_step_dir
@@ -303,17 +301,23 @@ def partitioning(self) -> None:
             self.train_transformations[step] = train_manifest.get("transformations", {})
             # self.train_metrics[step] = {}
             # self.train_dataframes[step] = {}
-            return
+            return"""
         # Nothing to reuse → spec mandates failure
     
-        
+        # ‑‑‑ nothing to reuse → raise, as required by SPEC §5
+        #raise FileNotFoundError(
+            #f"[{step.upper()}] Expected training artefacts at {step_dir} but none found."
+        #)
     
-    # ‑‑‑ nothing to reuse → raise, as required by SPEC §5
-    #raise FileNotFoundError(
-        #f"[{step.upper()}] Expected training artefacts at {step_dir} but none found."
-    #)
-    
-        self.dataframes[step]["test"]=self.dataframes["feature_engineering"]["feature_engineered"]
+        # self.dataframes[step]["test"]=self.dataframes["feature_engineering"]["feature_engineered"]
+        self.dataframes[step].update({
+            "test": self.dataframes["feature_engineering"]["feature_engineered"],  # self.dataframes["test"],
+            #"train": self.dataframes["train"],
+            #"val": self.dataframes["val"],
+            #"excluded": self.dataframes["excluded"]
+            
+        })
+
         save_outputs(
             df_test=self.dataframes[step]["test"], # df_train, df_val,  df_excluded,
             id_col=config_init["id_col"], # self.dataframes["stratification_keys"], 
@@ -325,33 +329,26 @@ def partitioning(self) -> None:
             train_mode=self.train_mode
         )
 
-        create_manifest(step, param_hash, config_init, step_dir)
 
         if config_init.get("use_mlflow", False):
             with mlflow.start_run(run_name=f"{step}_{param_hash}"):
                 mlflow.set_tags({"step": step, "param_hash": param_hash})
-                mlflow.log_artifacts(step_dir, artifact_path=step)
+                mlflow.log_artifacts(run_step_dir, artifact_path=step)
 
-        log_registry(step, self.global_hash, config_init, step_dir)  # SPEC§7
+        log_registry(step, self.global_hash, config_init, run_step_dir)  # SPEC§7
 
-        self.dataframes[step].update({
-            "test": self.dataframes["feature_engineering"]["feature_engineered"],  # self.dataframes["test"],
-            #"train": self.dataframes["train"],
-            #"val": self.dataframes["val"],
-            #"excluded": self.dataframes["excluded"]
-            
-        })
-        print(f"[{step.upper()}] Partitioning step in inference mode does nothing. Data saved to {step_dir}")
+        print(f"[{step.upper()}] Partitioning step in inference mode does nothing. Data saved to {run_step_dir}")
         print(f"[{step.upper()}] Inference records: {len(self.dataframes[step]['test'])}")
         # print(f"[{step.upper()}] Excluded samples: {len(df_excluded)}")
         print(f"[{step.upper()}] Total records processed: "
             f"{len(self.dataframes[step]['test'])}")
 
-        self.paths[step] = step_dir
-
-        raise FileNotFoundError(
-            f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
-        )
+        self.paths[step] = run_step_dir
+        create_manifest(step, param_hash, config_init, run_step_dir)
+        return
+        # raise FileNotFoundError(
+        #    f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
+        # )
 
 
     # ----------------------------------------------------------------
@@ -370,17 +367,17 @@ def partitioning(self) -> None:
     # SPEC§1: use run‑level directory: artifacts/run_<hash>/<step>/       #
     # ------------------------------------------------------------------- #
     param_hash = self.global_hash  # keep var name to minimise diff
-    step_dir = os.path.join("artifacts", f"run_{self.global_hash}", step)
-    manifest_file = os.path.join(step_dir, "manifest.json")
+    
+    manifest_file = os.path.join(run_step_dir, "manifest.json")
 
     # ------------------------------------------------------------------- #
     # SPEC§14 skip‑guard                                                  #
     # ------------------------------------------------------------------- #
     if os.path.exists(manifest_file):
-        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
-        self.paths[step] = step_dir
+        print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
+        self.paths[step] = run_step_dir
         # removed: self.hashes no longer used.  # SPEC§3
-        checkpoint_data = load_checkpoint(step_dir, self.train_mode)  # self.global_hash, step
+        checkpoint_data = load_checkpoint(run_step_dir, self.train_mode)  # self.global_hash, step
         self.dataframes[step].update(checkpoint_data)
         return
 
@@ -432,14 +429,6 @@ def partitioning(self) -> None:
         step_dir=run_step_dir, train_mode=self.train_mode  # , param_hash
     )
 
-    create_manifest(step, param_hash, config_init, run_step_dir)
-
-    if config_init.get("use_mlflow", False):
-        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
-            mlflow.set_tags({"step": step, "param_hash": param_hash})
-            mlflow.log_artifacts(run_step_dir, artifact_path=step)
-
-    log_registry(step, self.global_hash, config_init, run_step_dir)  # SPEC§7
 
     self.dataframes[step].update({
         "train": df_train,
@@ -455,3 +444,11 @@ def partitioning(self) -> None:
 
     self.paths[step] = run_step_dir
     # removed: self.hashes no longer used.  # SPEC§3
+    create_manifest(step, param_hash, config_init, run_step_dir)
+
+    if config_init.get("use_mlflow", False):
+        with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+            mlflow.set_tags({"step": step, "param_hash": param_hash})
+            mlflow.log_artifacts(run_step_dir, artifact_path=step)
+
+    log_registry(step, self.global_hash, config_init, run_step_dir)  # SPEC§7

@@ -93,11 +93,29 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ------------------------------------------------------------------- #
     # 1️⃣  Inference → try to load from the training run                  #
     # ------------------------------------------------------------------- #
+    train_manifest = {}
     if not self.train_mode:
         train_step_dir = os.path.join(
             "artifacts", f"run_{self.global_train_hash}", step
         )
         train_manifest_dir = os.path.join(train_step_dir, "manifest.json")
+        print(f"[{step.upper()}] Looking for training artefacts in {train_step_dir}")
+        print(f"[DEBUG] Looking for train manifest at: {train_manifest_dir}")
+        print(f"[DEBUG] global_train_hash = {self.global_train_hash}")
+        print(f"[DEBUG] Exists? {os.path.exists(train_manifest_dir)}")
+        train_manifest_dir = os.path.normpath(train_manifest_dir)
+        print(f"[DEBUG] Normalized path: {train_manifest_dir}")
+        print(f"[DEBUG] repr(train_manifest_dir): {repr(train_manifest_dir)}")
+
+        try:
+            with open(train_manifest_dir, "r") as f:
+                print(f.read(200))
+        except Exception as e:
+            print(f"[ERROR] Could not read file: {e}")
+
+        if not os.path.exists(train_manifest_dir):
+            raise FileNotFoundError(f"[{step.upper()}] Expected training artefacts at {train_manifest_dir} but none found.")
+
         if os.path.exists(train_manifest_dir):
             train_manifest = json.load(open(train_manifest_dir, "r"))
             print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
@@ -110,11 +128,13 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
             # self.train_metrics[step] = {}
             # self.train_dataframes[step] = {}
             self.dataframes[step].update(_load_existing_numeric(self, run_step_dir))
-            return
+            print(" Reusing all training artefacts")
+            # return
         # Nothing to reuse → spec mandates failure
-        raise FileNotFoundError(
-            f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
-        )
+        else:
+            raise FileNotFoundError(
+                f"[{step.upper()}] Expected training artefacts at {train_manifest_dir} but none found."
+            )
 
     # ------------------------------------------------------------------- #
     # 2️⃣  Training mode – perform full computation                        #
@@ -141,11 +161,14 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ---------------------------------------------------------------- #
     # 2.1  Drop constants & identify column groups                     #
     # ---------------------------------------------------------------- #
-    dropped: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("dropped_columns", [])
-    constant_columns: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("constant_columns", [])
-    grouping_map: dict[str, Any] = {} if self.train_mode else train_manifest.get("columns", {}).get("grouping_map", {})
-    id_like_columns: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("id_like_columns", [])
-    final_columns: list[str] = [] if self.train_mode else train_manifest.get("columns", {}).get("final_columns", [])
+    dropped: list[str] = [] if self.train_mode else train_manifest.get("metadata", {}).get("dropped_columns", [])
+    constant_columns: list[str] = [] if self.train_mode else train_manifest.get("metadata", {}).get("constant_columns", [])
+    grouping_map: dict[str, Any] = {} if self.train_mode else train_manifest.get("metadata", {}).get("grouping_map", {})
+    id_like_columns: list[str] = [] if self.train_mode else train_manifest.get("metadata", {}).get("id_like_columns", [])
+    final_columns: list[str] = [] if self.train_mode else train_manifest.get("metadata", {}).get("final_columns", [])
+    if not final_columns:
+        raise ValueError(f"[{step.upper()}] final_columns is empty — cannot harmonize inference DataFrame")
+
     work_train = train_df.copy() if self.train_mode else test_df.copy()
 
     if self.train_mode:
@@ -322,6 +345,7 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
                 if df is not None and col in df.columns:
                     df[f"{col}_is_NA"] = (df[col] == mode_val).astype(int)    
     else:
+        print(work_train.shape)
         cat_cols = []
         for col, spec in imputation_stats.items():
             if spec["strategy"] == "mode":
@@ -333,6 +357,7 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
                 #for df in ():
                 if work_train is not None and col in work_train.columns:
                     work_train[col] = work_train[col].fillna(mode_val).replace("", mode_val)
+        print(work_train.shape)
 
 
     # ---------------------------------------------------------------- #
@@ -342,15 +367,29 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
 
     if not self.train_mode:
         test_proc = work_train.copy()
-        work_train = None
-        
-    for name, df in {
-        "train": work_train,
-        "val": val_proc,
-        "test": test_proc,
-        "excluded": excluded_proc,
-    }.items():
-        encoded_sets[name] = pd.get_dummies(df, columns=list(cat_cols), drop_first=False) if df is not None else None
+        # work_train = None
+
+    print("[DEBUG] work_train shape:", work_train.shape)
+    print("[DEBUG] test_proc shape:", test_proc.shape)
+    print("[DEBUG] One-hot encoding of work_train")
+
+    prelim_encoded_sets = {
+            "train": work_train if self.train_mode else None,
+            "val": val_proc if self.train_mode else None,
+            "test": test_proc,
+            "excluded": excluded_proc if self.train_mode and excluded_proc is not None else None,
+    }
+
+    if len(cat_cols):
+        for name, df in prelim_encoded_sets.items():
+            if df is not None:
+                print(name, df.shape)
+                print(cat_cols)
+                encoded_sets[name] = pd.get_dummies(df, columns=list(cat_cols), drop_first=False) if len(cat_cols) else df.copy()
+                print(name)
+                print(encoded_sets[name].shape)
+    else:
+        encoded_sets = prelim_encoded_sets.copy()
 
     train_enc = encoded_sets.get("train")
     end_cols = train_enc.columns if self.train_mode else final_columns
@@ -444,6 +483,14 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
             "excluded_num" : excluded_enc if self.train_mode and excluded_enc is not None else None,
         }
     )   
+
+
+    for name, df in self.dataframes[step].items():
+        if df is not None:
+            artifacts[f"{name}_num_csv"] = os.path.join(run_step_dir, f"{name}.csv")
+            df.to_csv(artifacts[f"{name}_num_csv"], index=False)
+
+
 
     self.paths[step] = run_step_dir
     # removed: self.hashes[step]  # SPEC §3

@@ -8,7 +8,7 @@ from typing import List
 
 import pandas as pd
 import streamlit as st
-
+import os
 from ml_pipeline.base import MLPipeline
 
 ARTIFACTS_ROOT = Path("artifacts")
@@ -61,29 +61,81 @@ def load_feature_names(train_hash: str) -> List[str]:
     return []
 
 
-def read_uploaded(file) -> pd.DataFrame | None:
+import os
+import pandas as pd
+
+def read_uploaded(uploaded_file):
+    if uploaded_file is None:
+        raise ValueError("No file uploaded.")
+
+    uploaded_file.seek(0)  # Reset pointer before reading
+
+    # Save to known location inside repo
+    os.makedirs("uploaded_data", exist_ok=True)
+    save_path = os.path.join("uploaded_data", uploaded_file.name)
+
+    with open(save_path, "wb") as f:
+        f.write(uploaded_file.read())
+
+    if os.path.getsize(save_path) == 0:
+        raise ValueError(f"File was saved as {save_path}, but it's empty.")
+
+
+    uploaded_file.seek(0)
+    contents = uploaded_file.read()
+
+    print(f"[DEBUG] Length of uploaded_file.read(): {len(contents)} bytes")
+    print(f"[DEBUG] Preview of contents:\n{contents[:200]!r}")
+
+    # Write to disk
+    os.makedirs("uploaded_data", exist_ok=True)
+    save_path = os.path.join("uploaded_data", uploaded_file.name)
+    with open(save_path, "wb") as f:
+        f.write(contents)
+
+    # Verify file written
+    print(f"[DEBUG] File written to: {save_path} ({os.path.getsize(save_path)} bytes)")
+
+    df = pd.read_csv(save_path)
+    print(f"[DEBUG] DataFrame shape: {df.shape}")
+    print(f"[DEBUG] DataFrame columns: {df.columns.tolist()}")
+
+    if df.empty or df.columns.size == 0:
+        raise ValueError(f"CSV at {save_path} has no usable columns.")
+
+    return df, save_path
+
+
+
+def read_uploaded_old(file) -> pd.DataFrame | None:
     """Accept CSV or Excel (clients / merchants / transactions)."""
     name = file.name.lower()
     if name.endswith(".csv"):
-        return pd.read_csv(file)
+        return pd.read_csv(file), "csv"
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        try:
+            xls = pd.ExcelFile(file)
+            df_clients = pd.read_excel(xls, "clients")
+            df_merchants = pd.read_excel(xls, "merchants")
+            df_tx = pd.read_excel(xls, "transactions")
+        except Exception as exc:
+            st.error(f"Excel reading error: {exc}")
+            return None
 
-    try:
-        xls = pd.ExcelFile(file)
-        df_clients = pd.read_excel(xls, "clients")
-        df_merchants = pd.read_excel(xls, "merchants")
-        df_tx = pd.read_excel(xls, "transactions")
-    except Exception as exc:
-        st.error(f"Excel reading error: {exc}")
-        return None
-
-    return (
-        df_tx.merge(df_clients, on="account_id", how="left")
-             .merge(df_merchants, on="merchant_id", how="left")
-    )
+        return (
+            df_tx.merge(df_clients, on="account_id", how="left")
+                .merge(df_merchants, on="merchant_id", how="left")
+        ), "excel"
+    elif name.endswith("sqlite"):
+        pass # TODO: implement SQLite reading
+    else:
+        # st.error("Unsupported file format. Please upload a CSV or Excel file.")
+        return file, "raw"  # for testing only
 
 
-def build_inference_cfg(train_hash: str, feature_names: list[str]) -> dict:
+def build_inference_cfg(train_hash: str, feature_names: list[str], upl: any) -> dict:
     """Minimal config that satisfies MLPipeline hashing rules in inference."""
+    df_raw, csv_path = read_uploaded(upl)
     return {
         "train_mode": False,
         "train_hash": train_hash,
@@ -94,6 +146,7 @@ def build_inference_cfg(train_hash: str, feature_names: list[str]) -> dict:
         "target_col": "fraud_bool",  # "is_fraud",
         "id_col": "account_id",  # "transaction_id",
         "use_mlflow": False,
+        "csv_path": csv_path,
     }
 
 
@@ -123,9 +176,9 @@ def main() -> None:
         st.info("Waiting for a file…")
         return
 
-    df_raw = read_uploaded(upl)
-    if df_raw is None:
-        return
+    df_raw, _ = read_uploaded(upl)
+    # if df_raw is None:
+        # return
 
     st.dataframe(df_raw.head(), use_container_width=True)
 
@@ -133,11 +186,10 @@ def main() -> None:
     st.header("3. Run inference")
     if st.button("Start prediction"):
         with st.spinner("Running pipeline…"):
-            cfg = build_inference_cfg(chosen_hash, feats)
-            pipe = MLPipeline(cfg, data_source="raw", raw_data=df_raw)
-            
+            cfg = build_inference_cfg(chosen_hash, feats, upl)
+            pipe = MLPipeline(cfg)  #, data_source=type, raw_data=df_raw)
             pipe.dataframes["init"]["raw"] = df_raw          # <- rende disponibile il raw DF
-            
+
             # run_all works in inference: each step reuses artefacts
             pipe.run_all()
             
@@ -152,7 +204,7 @@ def main() -> None:
                     "Scaling step did not create 'test_sca'. "
                     "Check that numeric_conversion() and scaling() ran in inference mode."
                 )            
-            preds = pipe.models["baseline"].predict_proba(
+            preds = pipe.train_models["model_baseline"]["baseline"].predict_proba(
                 scored_df[feats])[:, 1]
             scored_df = scored_df.copy()
             scored_df["fraud_score"] = preds
