@@ -63,10 +63,10 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
           ``artifacts/run_<self.global_train_hash>/numeric_conversion/``.
         • Else raise *FileNotFoundError* – never recompute.
     """
+    step = "numeric_conversion"
     # ------------------------------------------------------------------- #
     # Resolve paths                                                       #
     # ------------------------------------------------------------------- #
-    step = "numeric_conversion"
     param_hash = self.global_hash
     run_step_dir = os.path.join("artifacts", f"run_{param_hash}", step) # step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
     run_manifest_dir = os.path.join(run_step_dir, "manifest.json")  #  ____manifest = os.path.join(run_step_dir, "manifest.json")
@@ -77,8 +77,17 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ------------------------------------------------------------------- #
     if os.path.exists(run_manifest_dir):
         print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
+        manifest = json.load(open(run_manifest_dir, "r"))
         self.paths[step] = run_step_dir
-        self.dataframes.update(_load_existing_numeric(self, run_step_dir))
+        self.dataframes[step].update(_load_existing_numeric(self, run_step_dir))
+        self.artifacts[step] = manifest.get("artifacts", {})
+        self.transformations[step] = manifest.get("transformations", {})
+        self.config[step] = manifest.get("config", {})
+        self.metadata[step] = manifest.get("metadata", {}) 
+        self.train_paths[step] = manifest.get("train_dir")
+        self.train_artifacts[step] = manifest.get("train_artifacts", {})
+        self.train_models[step] = manifest.get("train_models", {})
+        self.train_transformations[step] = manifest.get("train_transformations", {})
         return
 
     # ------------------------------------------------------------------- #
@@ -94,13 +103,13 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
             print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
             self.train_paths[step] = train_step_dir
             # self.global_train_hash = train_manifest.get("global_hash")
-            self.train_manifest[step] = train_manifest
+            
             self.train_models[step] = {}
             self.train_artifacts[step] = train_manifest.get("artifacts", {})
             self.train_transformations[step] = train_manifest.get("transformations", {})
             # self.train_metrics[step] = {}
             # self.train_dataframes[step] = {}
-            self.dataframes.update(_load_existing_numeric(self, run_step_dir))
+            self.dataframes[step].update(_load_existing_numeric(self, run_step_dir))
             return
         # Nothing to reuse → spec mandates failure
         raise FileNotFoundError(
@@ -110,15 +119,15 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ------------------------------------------------------------------- #
     # 2️⃣  Training mode – perform full computation                        #
     # ------------------------------------------------------------------- #
-    cfg = self.config
+    cfg = self.config["init"]
     seed = cfg.get("seed", 42)
     np.random.seed(seed)
     
-    test_df: pd.DataFrame = self.dataframes["test"]
-    
-    train_df: pd.DataFrame = self.dataframes["train"] if self.train_mode else None
-    val_df: pd.DataFrame = self.dataframes["val"] if self.train_mode else None
-    excluded_df: pd.DataFrame | None = self.dataframes.get("excluded") if self.train_mode else None
+    test_df: pd.DataFrame = self.dataframes[step]["test"]
+
+    train_df: pd.DataFrame = self.dataframes[step]["train"] if self.train_mode else None
+    val_df: pd.DataFrame = self.dataframes[step]["val"] if self.train_mode else None
+    excluded_df: pd.DataFrame | None = self.dataframes[step].get("excluded") if self.train_mode else None
 
     dataset_size = len(train_df) if self.train_mode else len(test_df)
 
@@ -379,7 +388,6 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
         "final_columns_json": os.path.join(run_step_dir, "final_columns.json") if self.train_mode else os.path.join(train_step_dir, "final_columns.json") ,
     }
 
-
     for name, df in encoded_sets.items():
         if df is not None:
             artifacts[f"{name}_num_csv"] = os.path.join(run_step_dir, f"{name}_num.csv")
@@ -390,19 +398,22 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     with open(artifacts["imputation_stats_json"], "w") as fh:
         json.dump(convert_numpy_types(imputation_stats), fh, indent=2)
 
-    metadata = {}
+    metadata = {
+        "step": step,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "global_hash": self.global_hash,
+        "global_train_hash": self.global_train_hash,
+    }
 
     columns = {
-        "dropped_columns": list(set(dropped + constant_columns)),
-        "id_like_columns": id_like_columns,
+        "dropped_columns": list(set(dropped + constant_columns)) if self.train_mode else train_manifest.get("columns", {}).get("dropped_columns", []),
+        "id_like_columns": id_like_columns if self.train_mode else train_manifest.get("columns", {}).get("id_like_columns", []),
         "encoded_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
-        "constant_columns": constant_columns,
+        "constant_columns": constant_columns if self.train_mode else train_manifest.get("columns", {}).get("constant_columns", []),
         "original_columns": train_df.columns.tolist() if self.train_mode else test_df.columns.tolist(),
         "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
         "grouping_map": grouping_map if self.train_mode else train_manifest.get("columns", {}).get("grouping_map", {}),
     }
-
-    metadata.update(columns)
 
     # metadata = {
         # "central_tendency": central_tendency if self.train_mode else train_manifest.get("central_tendency", None),
@@ -425,7 +436,7 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # ---------------------------------------------------------------- #
     # 2.8  Update pipeline state                                       #
     # ---------------------------------------------------------------- #
-    self.dataframes.update(
+    self.dataframes[step].update(
         {
             "train_num": train_enc if self.train_mode else None,
             "val_num": val_enc if self.train_mode else None,
@@ -438,63 +449,56 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     # removed: self.hashes[step]  # SPEC §3
     self.artifacts[step] = artifacts
     
-    
     transformations = {
         "grouping_map": grouping_map if self.train_mode else self.train_transformations[step].get("grouping_map", {}),
         "imputation_stats": imputation_stats if self.train_mode else train_manifest.get("columns", {}).get("imputation_stats", {}),
-        # "imputation_stats": imputation_stats if self.train_mode else self.train_manifest.get("artifacts", {}).get("imputation_stats", {}),
+        
         "cardinality_threshold": c1 if self.train_mode else train_manifest.get("cardinality_threshold", None),
         "rare_category_fraction": c2 if self.train_mode else train_manifest.get("rare_category_fraction", None),
         "high_as_mid": b1 if self.train_mode else train_manifest.get("high_as_mid", None),
         "id_like_log_ratio_threshold": c3 if self.train_mode else train_manifest.get("id_like_log_ratio_threshold", None),
-        "id_like_exempt": id_like_exempt if self.train_mode else train_manifest.get("id_like_exempt", None),
- 
+        "id_like_exempt": id_like_exempt if self.train_mode else train_manifest.get("id_like_exempt", None), 
         # "feature_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
         # "dropped_columns": list(set(dropped + constant_columns)),
     }
 
     self.transformations[step] = transformations
 
-    metadata.update(transformations)
-
     with open(artifacts["metadata_json"], "w") as fh:
         json.dump(metadata, fh, indent=2)
 
     self.metadata[step] = metadata
 
+    step_config = {k: cfg.get(k) for k in ("c1", "c2", "b1", "c3", "id_like_exempt", "central_tendency")} if self.train_mode else train_manifest.get("config", {})
+
+    other_metadata = {
+            "output_dir": run_step_dir,
+            "train_dir": train_step_dir if not self.train_mode else run_step_dir,
+            # "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
+            # 'columns': columns,
+        }
+    
+    metadata.update(columns)
+    metadata.update(other_metadata)
+    metadata.update(transformations)
 
     manifest = {
         "step": step,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        #"config": {
-        #    k: cfg[k] for k in ("c1", "c2", "b1", "c3", "id_like_exempt", "central_tendency")
-        #},
-        # use cfg.get(...) so that truly optional keys
-        # do not raise KeyError (SPEC §16 – correctness)
-        "config": {k: cfg.get(k)
-                   for k in ("c1", "c2", "b1", "c3",
-                             "id_like_exempt", "central_tendency")} if self.train_mode else train_manifest.get("config", {}),
-        "output_dir": run_step_dir,
-        "train_dir": train_step_dir if not self.train_mode else run_step_dir,
+        "global_hash": self.global_hash,
+        "global_train_hash": self.global_train_hash if not self.train_mode else None,
+        "config": step_config,        
         "artifacts": artifacts,
         'transformations': transformations,  # if self.train_mode else self.train_transformations[step],
-        'artifacts': artifacts,  # self.artifacts[step],
-        # 'train_artifacts': self.train_artifacts[step] if not self.train_mode else None,
-        # 'train_transformations': self.train_transformations[step] if not self.train_mode else None,
-        'metadata': metadata,  # self.metadata[step],
-        # "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),
-        'columns': columns,
+        'metadata': metadata,  # self.metadata[step], # "train_dir": train_step_dir if not self.train_mode else run_step_dir,         # "output_dir": run_step_dir,  # "final_columns": train_enc.columns.tolist() if self.train_mode else test_enc.columns.tolist(),  # 'columns': columns,
+        'train_artifacts': self.train_artifacts[step] if not self.train_mode else None,
+        'train_transformations': self.train_transformations[step] if not self.train_mode else None,
     }
 
     with open(run_manifest_dir, "w") as fh:
         json.dump(manifest, fh, indent=2)
 
-    
-    # self.train_manifest[step] = train_manifest if not self.train_mode else None
-
     print(f"Manifest saved to: {run_manifest_dir}")
     #print(f"Artifacts: {artifacts}")
     print(f"Artifacts saved to: {run_step_dir}")
     print(f"[{step.upper()}] Finished")
-
-#  if __name__ == "__main__":

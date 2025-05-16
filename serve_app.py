@@ -136,7 +136,7 @@ def main() -> None:
             cfg = build_inference_cfg(chosen_hash, feats)
             pipe = MLPipeline(cfg, data_source="raw", raw_data=df_raw)
             
-            pipe.dataframes["raw"] = df_raw          # <- rende disponibile il raw DF
+            pipe.dataframes["init"]["raw"] = df_raw          # <- rende disponibile il raw DF
             
             # run_all works in inference: each step reuses artefacts
             pipe.run_all()
@@ -145,7 +145,7 @@ def main() -> None:
             # if scored_df is None:
                 # scored_df = pipe.dataframes.get("raw")
             # the most transformed DF available is test_sca (scaling step)
-            scored_df = pipe.dataframes.get("test_sca") # or pipe.dataframes.get("raw")
+            scored_df = pipe.dataframes["scaling"].get("test_sca") # or pipe.dataframes.get("raw")
             if scored_df is None:
                 # something went wrong upstream – stop early and help the user
                 raise RuntimeError(

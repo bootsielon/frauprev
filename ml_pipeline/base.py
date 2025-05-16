@@ -46,7 +46,7 @@ class MLPipeline:
     # ──────────────────────────────────────────────────────────────────
     def __init__(
         self,
-        config      : dict[str, Any],
+        input_config      : dict[str, Any],
         *,
         data_source : str               = "csv",  # "sqlite", "xlsx", "raw"
         db_path     : str               = "fraud_poc.db",
@@ -54,17 +54,19 @@ class MLPipeline:
         csv_path    : str | None        = None,
         raw_data    : pd.DataFrame | None = None,
     ) -> None:
+        step = "init"
         # ------------------------------------------------ core config --
-        self.config: dict[str, Any] = deepcopy(config)
-        self.train_mode: bool = bool(self.config.get("train_mode", True))
-        self.config["train_mode"] = self.train_mode  # echo back
+        self.config: dict[str, Any] = {}
+        self.config[step] = deepcopy(input_config)
+        self.train_mode: bool = bool(self.config[step].get("train_mode", True))
+        self.config[step]["train_mode"] = self.train_mode  # echo back
 
-        # ------------------------------------------------ data handles -
-        self.data_source    = self.config.get("data_source")  # data_source
-        self.db_path        = self.config.get("db_path")
-        self.xlsx_path      = self.config.get("xlsx_path")  # updated to use config
-        self.csv_path       = self.config.get("csv_path")   # updated to use config
-        self.raw_data       = raw_data
+        # -------------------- data handles ----------------------------
+        self.data_source    = self.config[step].get("data_source")  # data_source
+        self.db_path        = self.config[step].get("db_path")
+        self.xlsx_path      = self.config[step].get("xlsx_path")  # updated to use config
+        self.csv_path       = self.config[step].get("csv_path")   # updated to use config
+        self.raw_data       = self.config[step].get("raw_data")   # updated to use config
 
         # ------------------------------------------------ bookkeeping --
         self.dataframes: dict[str, pd.DataFrame] = {}
@@ -75,9 +77,11 @@ class MLPipeline:
         self.transformations: dict[str, dict]    = {}
         self.metadata  : dict[str, Any]            = {}
         # ------------------------------------------------ run hash -----
+        self.dataframes[step]["raw"] = raw_data
+
         if self.train_mode:
             full_config = {
-                "user_config": self.config,
+                "user_config": self.config[step],
                 "data_source": data_source,
                 "db_path"    : db_path,
                 "xlsx_path"  : xlsx_path,
@@ -87,26 +91,26 @@ class MLPipeline:
             self.global_train_hash = self.global_hash
         else:
             key_tuple = (
-                self.config["model_name"],
-                self.config["model_hash"],
-                self.config["dataset_name"],
-                tuple(sorted(self.config["feature_names"])),
-                self.config.get("inference_extra", {}),
+                self.config[step]["model_name"],
+                self.config[step]["model_hash"],
+                self.config[step]["dataset_name"],
+                tuple(sorted(self.config[step]["feature_names"])),
+                self.config[step].get("inference_extra", {}),
             )
             self.global_hash = make_param_hash(key_tuple)
-            self.global_train_hash = self.config["train_hash"]
+            self.global_train_hash = self.config[step]["train_hash"]
             # self.dataframes: dict[str, pd.DataFrame] = {}
             self.train_paths     : dict[str, str]          = {}
             self.train_models    : dict[str, object]       = {}
             # self.train_metrics   : dict[str, dict]         = {}
             self.train_artifacts : dict[str, dict]         = {}
             self.train_transformations: dict[str, dict]    = {}
-            self.train_manifest  : dict[str, Any]            = {}
+            # self.train_manifest  : dict[str, Any]            = {}
             self.train_metadata  : dict[str, Any]            = {}
 
         # expose hashes
-        self.config["global_hash"]       = self.global_hash
-        self.config["global_train_hash"] = self.global_train_hash
+        self.config[step]["global_hash"]       = self.global_hash
+        self.config[step]["global_train_hash"] = self.global_train_hash
 
         # ------------------------------------------------ run directory -
         self.run_dir = os.path.join("artifacts", f"run_{self.global_hash}")
@@ -205,7 +209,7 @@ class MLPipeline:
         self.shap_selection()
         self.feature_correlation()
 
-        if self.config.get("use_cluster_select", [False])[0]:
+        if self.config["init"].get("use_cluster_select", [False])[0]:
             self.feature_select_cluster()
         else:
             self.feature_select_threshold()

@@ -253,73 +253,105 @@ def partitioning(self) -> None:
     Partition feature‑engineered data into train, validation, and test sets.
     """
     step = "partitioning"
+    config_init = self.config["init"]
     param_hash = self.global_hash
-    step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
-    manifest   = os.path.join(step_dir, "manifest.json")
-    os.makedirs(step_dir, exist_ok=True)
+    run_step_dir   = os.path.join("artifacts", f"run_{param_hash}", step)
+    run_manifest_dir   = os.path.join(run_step_dir, "manifest.json")
+    os.makedirs(run_step_dir, exist_ok=True)
+    self.dataframes[step] = {}
+    self.paths[step] = run_step_dir
+    # ----------------------------------------------------------------
+    # 0  Skip‑guard – artefacts already in *current* run folder
+    # ----------------------------------------------------------------
+    if os.path.exists(run_manifest_dir):
+        print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
+        manifest = json.load(open(run_manifest_dir, "r"))
+        self.paths[step] = run_step_dir
+        self.dataframes[step].update(load_checkpoint(run_step_dir, self.train_mode))  #self.global_hash, step
+        # removed: self.hashes no longer used.  # SPEC§3
+        # self.dataframes[step].update(_load_existing_numeric(self, run_step_dir))
+        self.artifacts[step] = manifest.get("artifacts", {})
+        self.transformations[step] = manifest.get("transformations", {})
+        self.config[step] = manifest.get("config", {})
+        self.metadata[step] = manifest.get("metadata", {}) 
+        self.train_paths[step] = manifest.get("train_dir")
+        self.train_artifacts[step] = manifest.get("train_artifacts", {})
+        self.train_models[step] = manifest.get("train_models", {})
+        self.train_transformations[step] = manifest.get("train_transformations", {})
+        return
+
 
     # ----------------------------------------------------------------
-    # 0  Inference mode → load built artefacts NOT from TRAINING run
+    # 1  Inference mode → load built artefacts NOT from TRAINING run
     # ----------------------------------------------------------------
     if not self.train_mode:
         # step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
-        inf_manif = os.path.join(step_dir, "manifest.json")
-        if os.path.exists(inf_manif):
-            print(f"[{step.upper()}] Reusing artefacts from {step_dir}")
-            self.paths[step] = step_dir
-            self.dataframes.update(load_checkpoint(step_dir, self.train_mode))  #self.global_hash, step
+        train_step_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
+        train_manifest_dir = os.path.join(train_step_dir, "manifest.json")
+        train_manifest = {}
+        if os.path.exists(train_manifest_dir):
+            print(f"[{step.upper()}] Reusing training artefacts from {train_step_dir}")
+            train_manifest = json.load(open(train_manifest_dir, "r"))
+            self.train_paths[step] = train_step_dir
+            self.paths[step] = train_step_dir
+            # self.dataframes[step].update(load_checkpoint(train_step_dir, self.train_mode))  #self.global_hash, step
+            self.train_paths[step] = train_step_dir
+            self.train_artifacts[step] = train_manifest.get("train_artifacts", {})
+            self.train_models[step] = train_manifest.get("train_models", {})
+            self.train_transformations[step] = train_manifest.get("train_transformations", {})
+            self.train_artifacts[step] = train_manifest.get("artifacts", {})
+            self.train_transformations[step] = train_manifest.get("transformations", {})
+            # self.train_metrics[step] = {}
+            # self.train_dataframes[step] = {}
             return
-        else:
-            # ‑‑‑ nothing to reuse → raise, as required by SPEC §5
-            #raise FileNotFoundError(
-                #f"[{step.upper()}] Expected training artefacts at {step_dir} but none found."
-            #)
+        # Nothing to reuse → spec mandates failure
+    
+        
+    
+    # ‑‑‑ nothing to reuse → raise, as required by SPEC §5
+    #raise FileNotFoundError(
+        #f"[{step.upper()}] Expected training artefacts at {step_dir} but none found."
+    #)
+    
+        self.dataframes[step]["test"]=self.dataframes["feature_engineering"]["feature_engineered"]
+        save_outputs(
+            df_test=self.dataframes[step]["test"], # df_train, df_val,  df_excluded,
+            id_col=config_init["id_col"], # self.dataframes["stratification_keys"], 
+            step_dir=run_step_dir,  # , param_hash=param_hash
+            df_train=None, 
+            df_val=None, 
+            df_excluded=None, 
+            stratify_keys=None,
+            train_mode=self.train_mode
+        )
 
-            save_outputs(
-                df_test=self.dataframes["feature_engineered"], # df_train, df_val,  df_excluded,
-                id_col=self.config["id_col"], # self.dataframes["stratification_keys"], 
-                step_dir=step_dir,  # , param_hash=param_hash
-                df_train=None, 
-                df_val=None, 
-                df_excluded=None, 
-                stratify_keys=None,
-                train_mode=self.train_mode
-            )
+        create_manifest(step, param_hash, config_init, step_dir)
 
-            create_manifest(step, param_hash, self.config, step_dir)
+        if config_init.get("use_mlflow", False):
+            with mlflow.start_run(run_name=f"{step}_{param_hash}"):
+                mlflow.set_tags({"step": step, "param_hash": param_hash})
+                mlflow.log_artifacts(step_dir, artifact_path=step)
 
-            if self.config.get("use_mlflow", False):
-                with mlflow.start_run(run_name=f"{step}_{param_hash}"):
-                    mlflow.set_tags({"step": step, "param_hash": param_hash})
-                    mlflow.log_artifacts(step_dir, artifact_path=step)
+        log_registry(step, self.global_hash, config_init, step_dir)  # SPEC§7
 
-            log_registry(step, self.global_hash, self.config, step_dir)  # SPEC§7
+        self.dataframes[step].update({
+            "test": self.dataframes["feature_engineering"]["feature_engineered"],  # self.dataframes["test"],
+            #"train": self.dataframes["train"],
+            #"val": self.dataframes["val"],
+            #"excluded": self.dataframes["excluded"]
+            
+        })
+        print(f"[{step.upper()}] Partitioning step in inference mode does nothing. Data saved to {step_dir}")
+        print(f"[{step.upper()}] Inference records: {len(self.dataframes[step]['test'])}")
+        # print(f"[{step.upper()}] Excluded samples: {len(df_excluded)}")
+        print(f"[{step.upper()}] Total records processed: "
+            f"{len(self.dataframes[step]['test'])}")
 
-            self.dataframes.update({
-                "test": self.dataframes["feature_engineered"],  # self.dataframes["test"],
-                #"train": self.dataframes["train"],
-                #"val": self.dataframes["val"],
-                #"excluded": self.dataframes["excluded"]
-                
-            })
-            print(f"[{step.upper()}] Partitioning step in inference mode does nothing. Data saved to {step_dir}")
-            print(f"[{step.upper()}] Inference records: {len(self.dataframes['test'])}")
-            # print(f"[{step.upper()}] Excluded samples: {len(df_excluded)}")
-            print(f"[{step.upper()}] Total records processed: "
-                f"{len(self.dataframes['test'])}")
-
-            self.paths[step] = step_dir
-
-
-    # ----------------------------------------------------------------
-    # 1️⃣  Skip‑guard – artefacts already in *current* run folder
-    # ----------------------------------------------------------------
-    if os.path.exists(manifest):
-        print(f"[{step.upper()}] Skipping — checkpoint exists at {step_dir}")
         self.paths[step] = step_dir
-        self.dataframes.update(load_checkpoint(step_dir, self.train_mode))  #self.global_hash, step
-        # removed: self.hashes no longer used.  # SPEC§3
-        return
+
+        raise FileNotFoundError(
+            f"[{step.upper()}] Expected training artefacts at {train_step_dir} but none found."
+        )
 
 
     # ----------------------------------------------------------------
@@ -327,12 +359,12 @@ def partitioning(self) -> None:
     # ----------------------------------------------------------------
 
     
-    df = self.dataframes["feature_engineered"]
-    target = self.config["target_col"]
-    id_col = self.config["id_col"]
-    use_stratification = self.config["use_stratification"]
-    use_downsampling = self.config.get("use_downsampling", True)
-    seed = self.config["seed"]
+    df = self.dataframes["feature_engineering"]["feature_engineered"]
+    target = config_init["target_col"]
+    id_col = config_init["id_col"]
+    use_stratification = config_init["use_stratification"]
+    use_downsampling = config_init.get("use_downsampling", True)
+    seed = config_init["seed"]
 
     # ------------------------------------------------------------------- #
     # SPEC§1: use run‑level directory: artifacts/run_<hash>/<step>/       #
@@ -349,12 +381,12 @@ def partitioning(self) -> None:
         self.paths[step] = step_dir
         # removed: self.hashes no longer used.  # SPEC§3
         checkpoint_data = load_checkpoint(step_dir, self.train_mode)  # self.global_hash, step
-        self.dataframes.update(checkpoint_data)
+        self.dataframes[step].update(checkpoint_data)
         return
 
     # os.makedirs(step_dir, exist_ok=True)
     stratify_cols = identify_stratification_columns(
-        df, target, use_stratification, self.config["stratify_cardinality_threshold"]
+        df, target, use_stratification, config_init["stratify_cardinality_threshold"]
     )
     
     df_for_splitting = df
@@ -387,138 +419,39 @@ def partitioning(self) -> None:
             df_for_splitting = df_balanced
 
     stratify_key = df_for_splitting[stratify_cols].astype(str).agg("_".join, axis=1)
-    self.dataframes["stratification_keys"] = pd.Series(stratify_key)
+    self.dataframes[step]["stratification_keys"] = pd.Series(stratify_key)
 
-    val_ratio = self.config["val_size"] / (self.config["train_size"] + self.config["val_size"])
+    val_ratio = config_init["val_size"] / (config_init["train_size"] + config_init["val_size"])
     df_train, df_val, df_test, _ = perform_data_splits(
-        df_for_splitting, stratify_cols, self.config["test_size"], val_ratio, seed
+        df_for_splitting, stratify_cols, config_init["test_size"], val_ratio, seed
     )
     
     save_outputs(
-        df_train=df_train, df_val=df_val, df_test=df_test, df_excluded=df_excluded, 
-        id_col=id_col, stratify_keys=self.dataframes["stratification_keys"], 
-        step_dir=step_dir, train_mode=self.train_mode  # , param_hash
+        df_train=df_train, df_val=df_val, df_test=df_test, df_excluded=df_excluded,
+        id_col=id_col, stratify_keys=self.dataframes[step]["stratification_keys"],
+        step_dir=run_step_dir, train_mode=self.train_mode  # , param_hash
     )
-    
-    create_manifest(step, param_hash, self.config, step_dir)
 
-    if self.config.get("use_mlflow", False):
+    create_manifest(step, param_hash, config_init, run_step_dir)
+
+    if config_init.get("use_mlflow", False):
         with mlflow.start_run(run_name=f"{step}_{param_hash}"):
             mlflow.set_tags({"step": step, "param_hash": param_hash})
-            mlflow.log_artifacts(step_dir, artifact_path=step)
+            mlflow.log_artifacts(run_step_dir, artifact_path=step)
 
-    log_registry(step, self.global_hash, self.config, step_dir)  # SPEC§7
+    log_registry(step, self.global_hash, config_init, run_step_dir)  # SPEC§7
 
-    self.dataframes.update({
+    self.dataframes[step].update({
         "train": df_train,
         "val": df_val,
         "test": df_test,
         "excluded": df_excluded
     })
-    print(f"[{step.upper()}] Partitioning completed. Data saved to {step_dir}")
+    print(f"[{step.upper()}] Partitioning completed. Data saved to {run_step_dir}")
     print(f"[{step.upper()}] Train samples: {len(df_train)}, Val samples: {len(df_val)}, Test samples: {len(df_test)}")
     print(f"[{step.upper()}] Excluded samples: {len(df_excluded)}")
     print(f"[{step.upper()}] Total samples processed: "
           f"{len(df_train) + len(df_val) + len(df_test) + len(df_excluded)}")
 
-    self.paths[step] = step_dir
+    self.paths[step] = run_step_dir
     # removed: self.hashes no longer used.  # SPEC§3
-
-
-
-if __name__ == "__main__":
-    """
-    Smoke‑tests for the partitioning step
-    (SPEC §§17‑19 and §21: delivered separately from the main file).
-    """
-    import numpy as np
-    import pandas as pd
-    import shutil
-    import os
-    from ml_pipeline.utils import DEFAULT_TEST_HASH
-    from ml_pipeline.base import MLPipeline
-
-    # ---------------------------------------------------------------
-    # Helper to build a fresh pipeline instance
-    # ---------------------------------------------------------------
-    def build_pipeline(train_mode: bool, *, with_created_hash: bool = True):
-        # base parameters shared by both train & inference
-        cfg: dict = {
-            "target_col": "is_fraud",
-            "id_col": "transaction_id",
-            "use_mlflow": False,
-            "seed": 42,
-            "use_stratification": True,
-            "use_downsampling": True,
-            "stratify_cardinality_threshold": 5,
-            "train_size": 0.7,
-            "val_size": 0.15,
-            "test_size": 0.15,
-            # always present so we can flip modes freely
-            "train_hash": DEFAULT_TEST_HASH,
-            # mandatory inference‑mode keys (dummies are fine for tests)
-            "model_name": "dummy_model",
-            "model_hash": "abcd1234",
-            "dataset_name": "dummy_ds",
-            "feature_names": ["amount", "hour", "day"],
-        }
-
-        cfg["train_mode"] = train_mode            # flag must live inside config
-        pipe = MLPipeline(config=cfg)             # ctor reads everything from cfg
-
-        if with_created_hash:
-            pipe.global_hash = DEFAULT_TEST_HASH  # deterministic hash for tests
-        return pipe
-    step = "partitioning"
-    # ---------------------------------------------------------------
-    # Create mock data
-    # ---------------------------------------------------------------
-    np.random.seed(42)
-    n_samples = 200
-    mock_df = pd.DataFrame({
-        "transaction_id": range(1, n_samples + 1),
-        "amount": np.random.uniform(5, 500, n_samples),
-        "account_id": np.random.randint(1, 10, n_samples),
-        "merchant_id": np.random.randint(20, 40, n_samples),
-        "hour": np.random.randint(0, 6, n_samples),
-        "day": np.random.randint(0, 3, n_samples),
-        "category": np.random.choice(["A", "B"], n_samples),
-        "is_fraud": np.random.choice([0, 1], n_samples, p=[0.85, 0.15]),
-    })
-    mock_df.loc[mock_df.sample(frac=0.05, random_state=1).index, "amount"] = np.nan
-
-    # Clean up previous artefacts
-    artefact_root = os.path.join("artifacts", f"run_{DEFAULT_TEST_HASH}", step)
-    if os.path.exists(artefact_root):
-        shutil.rmtree(artefact_root)  # Clean up previous artefacts
-
-    # 1️⃣  Training ‑ fresh
-    pipe_train_fresh = build_pipeline(train_mode=True)
-    pipe_train_fresh.dataframes["feature_engineered"] = mock_df.copy()
-    print("\n>>> TRAINING RUN (fresh artefacts)")
-    pipe_train_fresh.partitioning()
-
-    # 2️⃣  Training ‑ skip‑guard
-    pipe_train_skip = build_pipeline(train_mode=True)
-    pipe_train_skip.dataframes["feature_engineered"] = mock_df.copy()
-    print("\n>>> TRAINING RUN (should skip)")
-    pipe_train_skip.partitioning()
-
-    # 3️⃣  Inference ‑ artefacts present
-    pipe_infer_ok = build_pipeline(train_mode=False)
-    pipe_infer_ok.dataframes["feature_engineered"] = mock_df.copy()
-    print("\n>>> INFERENCE RUN (artefacts present)")
-    pipe_infer_ok.partitioning()
-
-    # 4️⃣  Inference ‑ artefacts missing (expect failure)
-# 4️⃣  Inference – artefacts missing (must fail)
-    #missing_hash = "deadbeef9999"  # any value not used earlier
-    #pipe_infer_fail = build_pipeline(train_mode=False, with_created_hash=False)
-    #pipe_infer_fail.global_hash = missing_hash
-    # DO NOT inject feature_engineered here → forces step to look for training artefacts
-    print("\n>>> INFERENCE RUN (artefacts missing, should fail normally, but in partitioning this test is irrelevant)")
-    #try:
-        #pipe_infer_fail.partitioning()
-        #print("❌  ERROR: Missing‑artefact inference did *not* fail as expected")
-    #except FileNotFoundError as e:
-    #    print(f"✅  Caught expected error: {e}")
