@@ -71,7 +71,7 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     run_step_dir = os.path.join("artifacts", f"run_{param_hash}", step) # step_dir   = os.path.join("artifacts", f"run_{self.global_hash}", step)
     run_manifest_dir = os.path.join(run_step_dir, "manifest.json")  #  ____manifest = os.path.join(run_step_dir, "manifest.json")
     os.makedirs(run_step_dir, exist_ok=True)
-
+    self.dataframes[step] = {}
     # ------------------------------------------------------------------- #
     # 0️⃣  Skip‑guard – artefacts already in *current* run                #
     # ------------------------------------------------------------------- #
@@ -123,11 +123,11 @@ def numeric_conversion(self) -> None:  # noqa: C901  (complexity tolerated for n
     seed = cfg.get("seed", 42)
     np.random.seed(seed)
     
-    test_df: pd.DataFrame = self.dataframes[step]["test"]
-
-    train_df: pd.DataFrame = self.dataframes[step]["train"] if self.train_mode else None
-    val_df: pd.DataFrame = self.dataframes[step]["val"] if self.train_mode else None
-    excluded_df: pd.DataFrame | None = self.dataframes[step].get("excluded") if self.train_mode else None
+    previous_step = "partitioning"  # if self.train_mode else "feature_engineering"
+    test_df: pd.DataFrame = self.dataframes[previous_step]["test"]
+    train_df: pd.DataFrame = self.dataframes[previous_step]["train"] if self.train_mode else None
+    val_df: pd.DataFrame = self.dataframes[previous_step]["val"] if self.train_mode else None
+    excluded_df: pd.DataFrame | None = self.dataframes[previous_step].get("excluded") if self.train_mode else None
 
     dataset_size = len(train_df) if self.train_mode else len(test_df)
 

@@ -37,55 +37,56 @@ def eda(self) -> None:  # type: ignore[override]
     • Populates self.paths["eda"] with the directory holding EDA artefacts.
     """
     step = "eda"
-    step_dir = os.path.join("artifacts", f"run_{self.global_hash}", step)
-    manifest_fp = os.path.join(step_dir, "manifest.json")
-    raw_csv = os.path.join(step_dir, "raw_sample.csv")
+    param_hash = self.global_hash
+    run_step_dir = os.path.join("artifacts", f"run_{param_hash}", step)
+    run_manifest_dir = os.path.join(run_step_dir, "manifest.json")
+    raw_csv = os.path.join(run_step_dir, "raw_sample.csv")
 
-    train_step_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
-    train_manifest_fp = os.path.join(train_step_dir, "manifest.json")
+    # train_step_dir = os.path.join("artifacts", f"run_{self.global_train_hash}", step)
+    # train_manifest_fp = os.path.join(train_step_dir, "manifest.json")
+
+    os.makedirs(run_step_dir, exist_ok=True)
+    self.dataframes[step] = {}
+    # ------------------------------------------------------------------- #
+    # 0️⃣  Skip‑guard – artefacts already in *current* run                #
+    # ------------------------------------------------------------------- #
+    if os.path.exists(run_manifest_dir):
+        print(f"[{step.upper()}] Skipping — checkpoint exists at {run_step_dir}")
+        manifest = json.load(open(run_manifest_dir, "r"))
+        self.paths[step] = run_step_dir
+        self.dataframes[step]["raw"] =  self.load_data()  # pd.read_csv(os.path.join(run_step_dir, manifest["artifacts"]["raw_sample_csv"]))
+        #self.dataframes[step].update(_load_existing_numeric(self, run_step_dir))
+        self.artifacts[step] = manifest.get("artifacts", {})
+        self.transformations[step] = manifest.get("transformations", {})
+        self.config[step] = manifest.get("config", {})
+        self.metadata[step] = manifest.get("metadata", {}) 
+        # self.train_paths[step] = manifest.get("train_dir")
+        self.train_artifacts[step] = manifest.get("train_artifacts", {})
+        self.train_models[step] = manifest.get("train_models", {})
+        self.train_transformations[step] = manifest.get("train_transformations", {})
+        log_registry(step, self.global_hash, manifest["config"], run_step_dir)
+        return
+
 
     # ──────────────────────────────────────────────────────────────────
     # Skip‑guard (spec §14)
     # ──────────────────────────────────────────────────────────────────
-    if os.path.exists(manifest_fp):
-        with open(manifest_fp, "r", encoding="utf-8") as fp:
-            mdata = json.load(fp)
-        self.paths[step] = step_dir
-        log_registry(step, self.global_hash, mdata["config"], step_dir)
-        print(f"[{step.upper()}] Skipped – artefacts already exist at {step_dir}")
-        return
 
-    if not self.train_mode:
-        if not os.path.exists(train_manifest_fp):
-            raise AssertionError(
-                f"[{step.upper()}] Missing training artefacts at {train_step_dir}"
-            )
-        os.makedirs(step_dir, exist_ok=True)
-        train_raw_csv = os.path.join(train_step_dir, "raw_sample.csv")
-        if os.path.exists(train_raw_csv) and not os.path.exists(raw_csv):
-            import shutil
-            shutil.copy2(train_raw_csv, raw_csv)
-
-        with open(train_manifest_fp, "r", encoding="utf-8") as fp:
-            mdata = json.load(fp)
-        self.paths[step] = train_step_dir
-        log_registry(step, self.global_hash, mdata["config"], train_step_dir)
-        print(f"[{step.upper()}] Re‑used training artefacts at {train_step_dir}")
-        return
 
     # ──────────────────────────────────────────────────────────────────
     # Training mode – full EDA
     # ──────────────────────────────────────────────────────────────────
-    os.makedirs(step_dir, exist_ok=True)
+    os.makedirs(run_step_dir, exist_ok=True)
 
     df = self.load_data()
+    self.dataframes[step] = {}
     self.dataframes[step]["raw"] = df
 
     df.head(500).to_csv(raw_csv, index=False)
 
-    summary_csv = os.path.join(step_dir, "summary_stats.csv")
-    meta_json = os.path.join(step_dir, "column_metadata.json")
-    class_png = os.path.join(step_dir, "class_distribution.png")
+    summary_csv = os.path.join(run_step_dir, "summary_stats.csv")
+    meta_json = os.path.join(run_step_dir, "column_metadata.json")
+    class_png = os.path.join(run_step_dir, "class_distribution.png")
 
     df.describe(include="all").to_csv(summary_csv)
 
@@ -121,7 +122,7 @@ def eda(self) -> None:  # type: ignore[override]
             "n_rows": len(df),
             "n_cols": df.shape[1],
         },
-        "output_dir": step_dir,
+        "output_dir": run_step_dir,
         "outputs": {
             "raw_sample_csv": os.path.basename(raw_csv),
             "summary_stats_csv": os.path.basename(summary_csv),
@@ -130,15 +131,34 @@ def eda(self) -> None:  # type: ignore[override]
         },
     }
 
-    with open(manifest_fp, "w", encoding="utf-8") as fp:
+    with open(run_manifest_dir, "w", encoding="utf-8") as fp:
         json.dump(manifest, fp, indent=2)
 
     if self.config["init"].get("use_mlflow", False):
         with mlflow.start_run(run_name=f"{step}_{self.global_hash}"):
             mlflow.set_tags({"step": step, "param_hash": self.global_hash})
-            mlflow.log_artifacts(step_dir, artifact_path=step)
+            mlflow.log_artifacts(run_step_dir, artifact_path=step)
 
-    self.paths[step] = step_dir
-    log_registry(step, self.global_hash, manifest["config"], step_dir)
+    self.paths[step] = run_step_dir
+    log_registry(step, self.global_hash, manifest["config"], run_step_dir)
 
-    print(f"[{step.upper()}] Done – artefacts at {step_dir}")
+    print(f"[{step.upper()}] Done – artefacts at {run_step_dir}")
+
+    """    if not self.train_mode:
+        if not os.path.exists(train_manifest_fp):
+            raise AssertionError(
+                f"[{step.upper()}] Missing training artefacts at {train_step_dir}"
+            )
+        os.makedirs(run_step_dir, exist_ok=True)
+        train_raw_csv = os.path.join(train_step_dir, "raw_sample.csv")
+        if os.path.exists(train_raw_csv) and not os.path.exists(raw_csv):
+            import shutil
+            shutil.copy2(train_raw_csv, raw_csv)
+
+        with open(train_manifest_fp, "r", encoding="utf-8") as fp:
+            mdata = json.load(fp)
+        self.paths[step] = train_step_dir
+        log_registry(step, self.global_hash, mdata["config"], train_step_dir)
+        print(f"[{step.upper()}] Re‑used training artefacts at {train_step_dir}")
+        return
+"""

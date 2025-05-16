@@ -77,6 +77,7 @@ class MLPipeline:
         self.transformations: dict[str, dict]    = {}
         self.metadata  : dict[str, Any]            = {}
         # ------------------------------------------------ run hash -----
+        self.dataframes[step] = {}
         self.dataframes[step]["raw"] = raw_data
 
         if self.train_mode:
@@ -100,14 +101,14 @@ class MLPipeline:
             self.global_hash = make_param_hash(key_tuple)
             self.global_train_hash = self.config[step]["train_hash"]
             # self.dataframes: dict[str, pd.DataFrame] = {}
-            self.train_paths     : dict[str, str]          = {}
-            self.train_models    : dict[str, object]       = {}
-            # self.train_metrics   : dict[str, dict]         = {}
-            self.train_artifacts : dict[str, dict]         = {}
-            self.train_transformations: dict[str, dict]    = {}
-            # self.train_manifest  : dict[str, Any]            = {}
-            self.train_metadata  : dict[str, Any]            = {}
-
+        self.train_paths     : dict[str, str]          = {}
+        self.train_models    : dict[str, object]       = {}
+        # self.train_metrics   : dict[str, dict]         = {}
+        self.train_artifacts : dict[str, dict]         = {}
+        self.train_transformations: dict[str, dict]    = {}
+        # self.train_manifest  : dict[str, Any]            = {}
+        self.train_metadata  : dict[str, Any]            = {}
+        self.train_config    : dict[str, Any] = {}
         # expose hashes
         self.config[step]["global_hash"]       = self.global_hash
         self.config[step]["global_train_hash"] = self.global_train_hash

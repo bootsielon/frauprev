@@ -89,7 +89,7 @@ def scaling(self) -> None:  # type: ignore[override]
     run_step_dir = os.path.join("artifacts", f"run_{param_hash}", step)
     run_manifest_dir = os.path.join(run_step_dir, "manifest.json")
     os.makedirs(run_step_dir, exist_ok=True)
-
+    self.dataframes[step] = {}
     # ------------------------------------------------------------------- #
     # 0️⃣  Skip‑guard – artefacts already in *current* run                #
     # ------------------------------------------------------------------- #
@@ -141,11 +141,11 @@ def scaling(self) -> None:  # type: ignore[override]
     seed = cfg.get("seed", 42)
     np.random.seed(seed)
 
-    test_df = self.dataframes[step]["test_num"]
-    train_df = self.dataframes[step]["train_num"] if self.train_mode else test_df
-    val_df = self.dataframes[step]["val_num"] if self.train_mode else None
-
-    excluded_df = self.dataframes[step].get("excluded_num") if self.train_mode else None
+    previous_step = "numeric_conversion"
+    test_df = self.dataframes[previous_step]["test_num"]
+    train_df = self.dataframes[previous_step]["train_num"] if self.train_mode else test_df
+    val_df = self.dataframes[previous_step]["val_num"] if self.train_mode else None
+    excluded_df = self.dataframes[previous_step].get("excluded_num") if self.train_mode else None
 
     target_col = cfg["target_col"]  # if self.train_mode else None
     id_col = cfg["id_col"]

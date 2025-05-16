@@ -152,10 +152,12 @@ def model_baseline(self) -> None:  # type: ignore[override]
     targ = cfg["target_col"]
 
     # -------------------- fetch scaled data generated earlier ----------
-    train_df = self.dataframes[step]["train_sca"] if self.train_mode else self.dataframes[step]["test_sca"]
-    val_df = self.dataframes[step]["val_sca"] if self.train_mode else None
-    test_df = self.dataframes[step]["test_sca"]
-    excl_df = self.dataframes[step].get("excluded_sca") if self.train_mode else None
+    previous_step = "scaling"
+
+    train_df = self.dataframes[previous_step]["train_sca"] if self.train_mode else self.dataframes[step]["test_sca"]
+    val_df = self.dataframes[previous_step]["val_sca"] if self.train_mode else None
+    test_df = self.dataframes[previous_step]["test_sca"]
+    excl_df = self.dataframes[previous_step].get("excluded_sca") if self.train_mode else None
 
     # drop potential non-numeric leftovers
     drop_obj = [c for c in train_df.columns if train_df[c].dtype == "object"]

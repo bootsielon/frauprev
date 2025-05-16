@@ -1,6 +1,8 @@
 {
   "step": "numeric_conversion",
-  "timestamp": "2025-05-15T03:05:34.517056+00:00",
+  "timestamp": "2025-05-16T07:24:38.318594+00:00",
+  "global_hash": "d704f662c694",
+  "global_train_hash": null,
   "config": {
     "c1": 10,
     "c2": 0.01,
@@ -9,16 +11,15 @@
     "id_like_exempt": null,
     "central_tendency": null
   },
-  "output_dir": "artifacts\\run_d704f662c694\\numeric_conversion",
   "artifacts": {
     "train_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\train_num.csv",
+    "excluded_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\excluded_num.csv",
     "val_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\val_num.csv",
     "test_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\test_num.csv",
     "grouping_map_json": "artifacts\\run_d704f662c694\\numeric_conversion\\grouping_map.json",
     "imputation_stats_json": "artifacts\\run_d704f662c694\\numeric_conversion\\imputation_stats.json",
     "metadata_json": "artifacts\\run_d704f662c694\\numeric_conversion\\metadata.json",
-    "final_columns_json": "artifacts\\run_d704f662c694\\numeric_conversion\\final_columns.json",
-    "excluded_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\excluded_num.csv"
+    "final_columns_json": "artifacts\\run_d704f662c694\\numeric_conversion\\final_columns.json"
   },
   "transformations": {
     "grouping_map": {
@@ -168,90 +169,17 @@
         "value": "windows"
       }
     },
-    "feature_columns": [
-      "fraud_bool",
-      "income",
-      "name_email_similarity",
-      "prev_address_months_count",
-      "current_address_months_count",
-      "customer_age",
-      "days_since_request",
-      "intended_balcon_amount",
-      "zip_count_4w",
-      "velocity_6h",
-      "velocity_24h",
-      "velocity_4w",
-      "bank_branch_count_8w",
-      "date_of_birth_distinct_emails_4w",
-      "credit_risk_score",
-      "email_is_free",
-      "phone_home_valid",
-      "phone_mobile_valid",
-      "bank_months_count",
-      "has_other_cards",
-      "proposed_credit_limit",
-      "foreign_request",
-      "session_length_in_minutes",
-      "keep_alive_session",
-      "device_distinct_emails_8w",
-      "month",
-      "account_id_is_NA",
-      "payment_type_is_NA",
-      "employment_status_is_NA",
-      "housing_status_is_NA",
-      "source_is_NA",
-      "device_os_is_NA",
-      "account_id_ID000034328",
-      "account_id_ID000092917",
-      "account_id_ID000093551",
-      "account_id_ID000097900",
-      "account_id_ID000123534",
-      "account_id_ID000320193",
-      "account_id_ID000367141",
-      "account_id_ID000373053",
-      "account_id_ID000488225",
-      "account_id_ID000938073",
-      "account_id_Other",
-      "payment_type_AA",
-      "payment_type_AB",
-      "payment_type_AC",
-      "payment_type_AD",
-      "payment_type_AE",
-      "employment_status_CA",
-      "employment_status_CB",
-      "employment_status_CC",
-      "employment_status_CD",
-      "employment_status_CE",
-      "employment_status_CF",
-      "employment_status_CG",
-      "housing_status_BA",
-      "housing_status_BB",
-      "housing_status_BC",
-      "housing_status_BD",
-      "housing_status_BE",
-      "housing_status_BF",
-      "housing_status_BG",
-      "source_INTERNET",
-      "source_TELEAPP",
-      "device_os_linux",
-      "device_os_macintosh",
-      "device_os_other",
-      "device_os_windows",
-      "device_os_x11"
-    ],
-    "dropped_columns": []
-  },
-  "outputs": {
-    "train_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\train_num.csv",
-    "val_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\val_num.csv",
-    "test_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\test_num.csv",
-    "grouping_map_json": "artifacts\\run_d704f662c694\\numeric_conversion\\grouping_map.json",
-    "imputation_stats_json": "artifacts\\run_d704f662c694\\numeric_conversion\\imputation_stats.json",
-    "metadata_json": "artifacts\\run_d704f662c694\\numeric_conversion\\metadata.json",
-    "final_columns_json": "artifacts\\run_d704f662c694\\numeric_conversion\\final_columns.json",
-    "excluded_num_csv": "artifacts\\run_d704f662c694\\numeric_conversion\\excluded_num.csv"
+    "cardinality_threshold": 10,
+    "rare_category_fraction": 0.01,
+    "high_as_mid": true,
+    "id_like_log_ratio_threshold": 5,
+    "id_like_exempt": true
   },
   "metadata": {
+    "step": "numeric_conversion",
+    "timestamp": "2025-05-16T07:24:38.207435+00:00",
+    "global_hash": "d704f662c694",
+    "global_train_hash": "d704f662c694",
     "dropped_columns": [],
     "id_like_columns": [],
     "encoded_columns": [
@@ -360,454 +288,6 @@
       "device_distinct_emails_8w",
       "month"
     ],
-    "grouping_map": {
-      "account_id": {
-        "strategy": "high_as_mid",
-        "top_categories": [
-          "ID000123534",
-          "ID000034328",
-          "ID000938073",
-          "ID000373053",
-          "ID000320193",
-          "ID000093551",
-          "ID000367141",
-          "ID000097900",
-          "ID000488225",
-          "ID000092917"
-        ]
-      }
-    },
-    "imputation_stats": {
-      "fraud_bool": {
-        "strategy": "median",
-        "value": 0.5
-      },
-      "income": {
-        "strategy": "median",
-        "value": 0.7000000000000001
-      },
-      "name_email_similarity": {
-        "strategy": "median",
-        "value": 0.4050629500882429
-      },
-      "prev_address_months_count": {
-        "strategy": "median",
-        "value": -1.0
-      },
-      "current_address_months_count": {
-        "strategy": "median",
-        "value": 75.0
-      },
-      "customer_age": {
-        "strategy": "median",
-        "value": 40.0
-      },
-      "days_since_request": {
-        "strategy": "median",
-        "value": 0.014024889971357
-      },
-      "intended_balcon_amount": {
-        "strategy": "median",
-        "value": -0.8695285659860863
-      },
-      "zip_count_4w": {
-        "strategy": "median",
-        "value": 1296.5
-      },
-      "velocity_6h": {
-        "strategy": "median",
-        "value": 5083.3814393375305
-      },
-      "velocity_24h": {
-        "strategy": "median",
-        "value": 4718.645782913449
-      },
-      "velocity_4w": {
-        "strategy": "median",
-        "value": 4869.68109222799
-      },
-      "bank_branch_count_8w": {
-        "strategy": "median",
-        "value": 7.0
-      },
-      "date_of_birth_distinct_emails_4w": {
-        "strategy": "median",
-        "value": 8.0
-      },
-      "credit_risk_score": {
-        "strategy": "median",
-        "value": 147.0
-      },
-      "email_is_free": {
-        "strategy": "median",
-        "value": 1.0
-      },
-      "phone_home_valid": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "phone_mobile_valid": {
-        "strategy": "median",
-        "value": 1.0
-      },
-      "bank_months_count": {
-        "strategy": "median",
-        "value": 3.0
-      },
-      "has_other_cards": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "proposed_credit_limit": {
-        "strategy": "median",
-        "value": 200.0
-      },
-      "foreign_request": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "session_length_in_minutes": {
-        "strategy": "median",
-        "value": 5.105136444600727
-      },
-      "keep_alive_session": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "device_distinct_emails_8w": {
-        "strategy": "median",
-        "value": 1.0
-      },
-      "month": {
-        "strategy": "median",
-        "value": 3.0
-      },
-      "account_id": {
-        "strategy": "mode",
-        "value": "Other"
-      },
-      "payment_type": {
-        "strategy": "mode",
-        "value": "AB"
-      },
-      "employment_status": {
-        "strategy": "mode",
-        "value": "CA"
-      },
-      "housing_status": {
-        "strategy": "mode",
-        "value": "BA"
-      },
-      "source": {
-        "strategy": "mode",
-        "value": "INTERNET"
-      },
-      "device_os": {
-        "strategy": "mode",
-        "value": "windows"
-      }
-    },
-    "cardinality_threshold": 10,
-    "rare_category_fraction": 0.01,
-    "high_as_mid": true,
-    "id_like_log_ratio_threshold": 5,
-    "id_like_exempt": true,
-    "central_tendency": "median",
-    "final_columns": [
-      "fraud_bool",
-      "income",
-      "name_email_similarity",
-      "prev_address_months_count",
-      "current_address_months_count",
-      "customer_age",
-      "days_since_request",
-      "intended_balcon_amount",
-      "zip_count_4w",
-      "velocity_6h",
-      "velocity_24h",
-      "velocity_4w",
-      "bank_branch_count_8w",
-      "date_of_birth_distinct_emails_4w",
-      "credit_risk_score",
-      "email_is_free",
-      "phone_home_valid",
-      "phone_mobile_valid",
-      "bank_months_count",
-      "has_other_cards",
-      "proposed_credit_limit",
-      "foreign_request",
-      "session_length_in_minutes",
-      "keep_alive_session",
-      "device_distinct_emails_8w",
-      "month",
-      "account_id_is_NA",
-      "payment_type_is_NA",
-      "employment_status_is_NA",
-      "housing_status_is_NA",
-      "source_is_NA",
-      "device_os_is_NA",
-      "account_id_ID000034328",
-      "account_id_ID000092917",
-      "account_id_ID000093551",
-      "account_id_ID000097900",
-      "account_id_ID000123534",
-      "account_id_ID000320193",
-      "account_id_ID000367141",
-      "account_id_ID000373053",
-      "account_id_ID000488225",
-      "account_id_ID000938073",
-      "account_id_Other",
-      "payment_type_AA",
-      "payment_type_AB",
-      "payment_type_AC",
-      "payment_type_AD",
-      "payment_type_AE",
-      "employment_status_CA",
-      "employment_status_CB",
-      "employment_status_CC",
-      "employment_status_CD",
-      "employment_status_CE",
-      "employment_status_CF",
-      "employment_status_CG",
-      "housing_status_BA",
-      "housing_status_BB",
-      "housing_status_BC",
-      "housing_status_BD",
-      "housing_status_BE",
-      "housing_status_BF",
-      "housing_status_BG",
-      "source_INTERNET",
-      "source_TELEAPP",
-      "device_os_linux",
-      "device_os_macintosh",
-      "device_os_other",
-      "device_os_windows",
-      "device_os_x11"
-    ]
-  },
-  "final_columns": [
-    "fraud_bool",
-    "income",
-    "name_email_similarity",
-    "prev_address_months_count",
-    "current_address_months_count",
-    "customer_age",
-    "days_since_request",
-    "intended_balcon_amount",
-    "zip_count_4w",
-    "velocity_6h",
-    "velocity_24h",
-    "velocity_4w",
-    "bank_branch_count_8w",
-    "date_of_birth_distinct_emails_4w",
-    "credit_risk_score",
-    "email_is_free",
-    "phone_home_valid",
-    "phone_mobile_valid",
-    "bank_months_count",
-    "has_other_cards",
-    "proposed_credit_limit",
-    "foreign_request",
-    "session_length_in_minutes",
-    "keep_alive_session",
-    "device_distinct_emails_8w",
-    "month",
-    "account_id_is_NA",
-    "payment_type_is_NA",
-    "employment_status_is_NA",
-    "housing_status_is_NA",
-    "source_is_NA",
-    "device_os_is_NA",
-    "account_id_ID000034328",
-    "account_id_ID000092917",
-    "account_id_ID000093551",
-    "account_id_ID000097900",
-    "account_id_ID000123534",
-    "account_id_ID000320193",
-    "account_id_ID000367141",
-    "account_id_ID000373053",
-    "account_id_ID000488225",
-    "account_id_ID000938073",
-    "account_id_Other",
-    "payment_type_AA",
-    "payment_type_AB",
-    "payment_type_AC",
-    "payment_type_AD",
-    "payment_type_AE",
-    "employment_status_CA",
-    "employment_status_CB",
-    "employment_status_CC",
-    "employment_status_CD",
-    "employment_status_CE",
-    "employment_status_CF",
-    "employment_status_CG",
-    "housing_status_BA",
-    "housing_status_BB",
-    "housing_status_BC",
-    "housing_status_BD",
-    "housing_status_BE",
-    "housing_status_BF",
-    "housing_status_BG",
-    "source_INTERNET",
-    "source_TELEAPP",
-    "device_os_linux",
-    "device_os_macintosh",
-    "device_os_other",
-    "device_os_windows",
-    "device_os_x11"
-  ],
-  "columns": {
-    "dropped_columns": [],
-    "id_like_columns": [],
-    "grouping_map": {
-      "account_id": {
-        "strategy": "high_as_mid",
-        "top_categories": [
-          "ID000123534",
-          "ID000034328",
-          "ID000938073",
-          "ID000373053",
-          "ID000320193",
-          "ID000093551",
-          "ID000367141",
-          "ID000097900",
-          "ID000488225",
-          "ID000092917"
-        ]
-      }
-    },
-    "imputation_stats": {
-      "fraud_bool": {
-        "strategy": "median",
-        "value": 0.5
-      },
-      "income": {
-        "strategy": "median",
-        "value": 0.7000000000000001
-      },
-      "name_email_similarity": {
-        "strategy": "median",
-        "value": 0.4050629500882429
-      },
-      "prev_address_months_count": {
-        "strategy": "median",
-        "value": -1.0
-      },
-      "current_address_months_count": {
-        "strategy": "median",
-        "value": 75.0
-      },
-      "customer_age": {
-        "strategy": "median",
-        "value": 40.0
-      },
-      "days_since_request": {
-        "strategy": "median",
-        "value": 0.014024889971357
-      },
-      "intended_balcon_amount": {
-        "strategy": "median",
-        "value": -0.8695285659860863
-      },
-      "zip_count_4w": {
-        "strategy": "median",
-        "value": 1296.5
-      },
-      "velocity_6h": {
-        "strategy": "median",
-        "value": 5083.3814393375305
-      },
-      "velocity_24h": {
-        "strategy": "median",
-        "value": 4718.645782913449
-      },
-      "velocity_4w": {
-        "strategy": "median",
-        "value": 4869.68109222799
-      },
-      "bank_branch_count_8w": {
-        "strategy": "median",
-        "value": 7.0
-      },
-      "date_of_birth_distinct_emails_4w": {
-        "strategy": "median",
-        "value": 8.0
-      },
-      "credit_risk_score": {
-        "strategy": "median",
-        "value": 147.0
-      },
-      "email_is_free": {
-        "strategy": "median",
-        "value": 1.0
-      },
-      "phone_home_valid": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "phone_mobile_valid": {
-        "strategy": "median",
-        "value": 1.0
-      },
-      "bank_months_count": {
-        "strategy": "median",
-        "value": 3.0
-      },
-      "has_other_cards": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "proposed_credit_limit": {
-        "strategy": "median",
-        "value": 200.0
-      },
-      "foreign_request": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "session_length_in_minutes": {
-        "strategy": "median",
-        "value": 5.105136444600727
-      },
-      "keep_alive_session": {
-        "strategy": "median",
-        "value": 0.0
-      },
-      "device_distinct_emails_8w": {
-        "strategy": "median",
-        "value": 1.0
-      },
-      "month": {
-        "strategy": "median",
-        "value": 3.0
-      },
-      "account_id": {
-        "strategy": "mode",
-        "value": "Other"
-      },
-      "payment_type": {
-        "strategy": "mode",
-        "value": "AB"
-      },
-      "employment_status": {
-        "strategy": "mode",
-        "value": "CA"
-      },
-      "housing_status": {
-        "strategy": "mode",
-        "value": "BA"
-      },
-      "source": {
-        "strategy": "mode",
-        "value": "INTERNET"
-      },
-      "device_os": {
-        "strategy": "mode",
-        "value": "windows"
-      }
-    },
-    "cardinality_threshold": 10,
-    "rare_category_fraction": 0.01,
     "final_columns": [
       "fraud_bool",
       "income",
@@ -879,9 +359,161 @@
       "device_os_windows",
       "device_os_x11"
     ],
+    "grouping_map": {
+      "account_id": {
+        "strategy": "high_as_mid",
+        "top_categories": [
+          "ID000123534",
+          "ID000034328",
+          "ID000938073",
+          "ID000373053",
+          "ID000320193",
+          "ID000093551",
+          "ID000367141",
+          "ID000097900",
+          "ID000488225",
+          "ID000092917"
+        ]
+      }
+    },
+    "output_dir": "artifacts\\run_d704f662c694\\numeric_conversion",
+    "train_dir": "artifacts\\run_d704f662c694\\numeric_conversion",
+    "imputation_stats": {
+      "fraud_bool": {
+        "strategy": "median",
+        "value": 0.5
+      },
+      "income": {
+        "strategy": "median",
+        "value": 0.7000000000000001
+      },
+      "name_email_similarity": {
+        "strategy": "median",
+        "value": 0.4050629500882429
+      },
+      "prev_address_months_count": {
+        "strategy": "median",
+        "value": -1.0
+      },
+      "current_address_months_count": {
+        "strategy": "median",
+        "value": 75.0
+      },
+      "customer_age": {
+        "strategy": "median",
+        "value": 40.0
+      },
+      "days_since_request": {
+        "strategy": "median",
+        "value": 0.014024889971357
+      },
+      "intended_balcon_amount": {
+        "strategy": "median",
+        "value": -0.8695285659860863
+      },
+      "zip_count_4w": {
+        "strategy": "median",
+        "value": 1296.5
+      },
+      "velocity_6h": {
+        "strategy": "median",
+        "value": 5083.3814393375305
+      },
+      "velocity_24h": {
+        "strategy": "median",
+        "value": 4718.645782913449
+      },
+      "velocity_4w": {
+        "strategy": "median",
+        "value": 4869.68109222799
+      },
+      "bank_branch_count_8w": {
+        "strategy": "median",
+        "value": 7.0
+      },
+      "date_of_birth_distinct_emails_4w": {
+        "strategy": "median",
+        "value": 8.0
+      },
+      "credit_risk_score": {
+        "strategy": "median",
+        "value": 147.0
+      },
+      "email_is_free": {
+        "strategy": "median",
+        "value": 1.0
+      },
+      "phone_home_valid": {
+        "strategy": "median",
+        "value": 0.0
+      },
+      "phone_mobile_valid": {
+        "strategy": "median",
+        "value": 1.0
+      },
+      "bank_months_count": {
+        "strategy": "median",
+        "value": 3.0
+      },
+      "has_other_cards": {
+        "strategy": "median",
+        "value": 0.0
+      },
+      "proposed_credit_limit": {
+        "strategy": "median",
+        "value": 200.0
+      },
+      "foreign_request": {
+        "strategy": "median",
+        "value": 0.0
+      },
+      "session_length_in_minutes": {
+        "strategy": "median",
+        "value": 5.105136444600727
+      },
+      "keep_alive_session": {
+        "strategy": "median",
+        "value": 0.0
+      },
+      "device_distinct_emails_8w": {
+        "strategy": "median",
+        "value": 1.0
+      },
+      "month": {
+        "strategy": "median",
+        "value": 3.0
+      },
+      "account_id": {
+        "strategy": "mode",
+        "value": "Other"
+      },
+      "payment_type": {
+        "strategy": "mode",
+        "value": "AB"
+      },
+      "employment_status": {
+        "strategy": "mode",
+        "value": "CA"
+      },
+      "housing_status": {
+        "strategy": "mode",
+        "value": "BA"
+      },
+      "source": {
+        "strategy": "mode",
+        "value": "INTERNET"
+      },
+      "device_os": {
+        "strategy": "mode",
+        "value": "windows"
+      }
+    },
+    "cardinality_threshold": 10,
+    "rare_category_fraction": 0.01,
     "high_as_mid": true,
     "id_like_log_ratio_threshold": 5,
-    "id_like_exempt": true,
-    "central_tendency": "median"
-  }
+    "id_like_exempt": true
+  },
+  "train_artifacts": null,
+  "train_transformations": null
 }

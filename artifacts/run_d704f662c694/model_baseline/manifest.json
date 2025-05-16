@@ -1,7 +1,7 @@
 {
   "step": "model_baseline",
   "param_hash": "d704f662c694",
-  "timestamp": "2025-05-15T03:06:00.658313+00:00",
+  "timestamp": "2025-05-16T07:25:01.824419+00:00",
   "config": {
     "n_estimators": null,
     "max_depth": null,
@@ -11,7 +11,7 @@
     "random_state": null
   },
   "output_dir": "artifacts\\run_d704f662c694\\model_baseline",
-  "outputs": {
+  "artifacts": {
     "model_file": "model.json",
     "metrics_file": "metrics.json",
     "feature_names_file": "feature_names.json",
@@ -19,6 +19,10 @@
     "roc_curve_png": "roc_curve.png"
   },
   "metrics": {
+    "test": {
+      "accuracy": 0.8025838621940163,
+      "roc_auc": 0.8828339671989931
+    },
     "train": {
       "accuracy": 0.8134715025906736,
       "roc_auc": 0.8958955357861956
@@ -26,10 +30,6 @@
     "val": {
       "accuracy": 0.8041704442429737,
       "roc_auc": 0.8863332426441034
-    },
-    "test": {
-      "accuracy": 0.8025838621940163,
-      "roc_auc": 0.8828339671989931
     },
     "excluded": {
       "accuracy": 0.8183634612277619,
